@@ -1,16 +1,15 @@
 import { useMemo } from 'react'
-import {
-  ChatMinimap,
+import ChatMinimap, {
   buildTurnItems,
   getRailReserve,
   useMinimapScrollSpy,
-} from '../chat-minimap'
+} from '../ChatMinimap.jsx'
 import { cn } from '../lib/cn.js'
 
 /**
- * ChatPanel：典型对话流 + 可带走的 ChatMinimap
+ * ChatPanel：典型对话流 + 单文件 ChatMinimap
  *  - 消息挂 data-id + registerItem 作为跳转锚点
- *  - scrollspy / 轮列表 / rail 预留宽度全部走 chat-minimap 公共 API
+ *  - scrollspy / 轮列表 / rail 预留宽度全部走 ChatMinimap.jsx 公共 API
  */
 export default function ChatPanel({ messages, minimapProps }) {
   const side = minimapProps?.side ?? 'left'
