@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ChatPanel from './ChatPanel.jsx'
+import CopyMinimapCodeBar from './CopyMinimapCodeBar.jsx'
 import { makeConversation, PRESETS } from './mockData.js'
 import { cn } from '../lib/cn.js'
 
@@ -7,6 +8,7 @@ import { cn } from '../lib/cn.js'
  * ChatLab：对话 Minimap 实验台（左右布局）
  *  - 左：调试面板（数据档 / 贴边 / 尺寸参数 / 判定条）
  *  - 右：对话窗口（无 card 包围，独占一半，唯一可滚动层）
+ *  - 底：一键复制 ChatMinimap.jsx
  *  - 整页恒 100vh，除对话窗口外禁止任何层级滚动
  */
 export default function ChatLab() {
@@ -42,8 +44,8 @@ export default function ChatLab() {
   const minimapProps = { itemSize, hoverRow, dotLen, hoverMax, gap, lensRange, side }
 
   return (
-    <div className="h-full overflow-hidden px-4 pb-4 pt-3.5 text-[#eaeaea]">
-      <div className="flex h-full min-h-0 gap-4">
+    <div className="flex h-full flex-col overflow-hidden text-[#eaeaea]">
+      <div className="flex min-h-0 flex-1 gap-4 px-4 pb-3 pt-3.5">
         <aside className="flex min-h-0 w-[clamp(300px,34%,440px)] shrink-0 flex-col gap-3 overflow-hidden">
           <header>
             <h1 className="mb-1 text-lg text-[#f2f2f4]">对话 Minimap 实验台</h1>
@@ -91,7 +93,7 @@ export default function ChatLab() {
           {/* 判定条：说明当前是否进入胶片跟随模式 */}
           <div
             className={cn(
-              'mb-3.5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[14px] border px-4 py-3 text-[13px]',
+              'flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[14px] border px-4 py-3 text-[13px]',
               overflow
                 ? 'border-[rgba(90,160,255,0.45)] bg-[rgba(90,160,255,0.1)] text-[#a9cbff]'
                 : 'border-[rgba(52,199,89,0.4)] bg-[rgba(52,199,89,0.1)] text-[#a7e5b5]',
@@ -115,6 +117,8 @@ export default function ChatLab() {
           <ChatPanel messages={messages} minimapProps={minimapProps} />
         </main>
       </div>
+
+      <CopyMinimapCodeBar />
     </div>
   )
 }
