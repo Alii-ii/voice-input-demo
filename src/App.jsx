@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Waveform from './Waveform.jsx'
+import { cn } from './lib/cn.js'
 
 /**
  * 交互状态机
@@ -211,18 +212,18 @@ export default function App() {
   const hint = mode === 'voice-hold' ? HOLD_HINT : CLICK_HINT
 
   return (
-    <div className="stage">
-      <div className="scene">
-        <p className="scene-title">
-          语音输入交互探索 · <span>{modeLabel(mode)}</span>
+    <div className="flex min-h-full items-center justify-center px-5 py-10">
+      <div className="w-full max-w-[640px]">
+        <p className="mx-1 mb-3.5 mt-0 text-[13px] tracking-wide text-[#8f8f92]">
+          语音输入交互探索 · <span className="font-semibold text-accent">{modeLabel(mode)}</span>
         </p>
 
-        <div className={`composer ${isVoice ? 'composer--voice' : ''}`}>
-          <div className="row">
-            <div className="input-wrap">
+        <div className="rounded-[26px] bg-panel px-4 pb-3.5 pt-4 shadow-[0_18px_50px_rgba(0,0,0,0.35)]">
+          <div className="flex flex-col gap-3.5">
+            <div className="px-1.5 pt-1">
               <textarea
                 ref={inputRef}
-                className="text-input"
+                className="m-0 block min-h-[25px] w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-sans text-[17px] leading-[26px] text-ink outline-none [overflow-wrap:break-word] placeholder:text-[#c2c2c4]"
                 value={text}
                 placeholder={isVoice ? hint : 'placeholder…'}
                 onChange={onChange}
@@ -245,7 +246,7 @@ export default function App() {
           </div>
         </div>
 
-        <Legend mode={mode} />
+        <Legend />
       </div>
     </div>
   )
@@ -263,23 +264,43 @@ function modeLabel(mode) {
 /* ---------------- 底部控件行（空态 / 文本态） ---------------- */
 function Controls({ hasText, onMic, onSend }) {
   return (
-    <div className="controls">
-      <button className="icon-btn plus" title="添加">
+    <div className="flex items-center gap-2.5">
+      <button
+        type="button"
+        className="mr-auto inline-flex h-[38px] w-[38px] cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-[#3a3a3c] transition-[transform,background] duration-150 hover:bg-[#f1f1f2] active:scale-[0.92]"
+        title="添加"
+      >
         <PlusIcon />
       </button>
-      <button className="model-pill" title="模型选择">
+      <button
+        type="button"
+        className="inline-flex h-[38px] cursor-pointer items-center gap-1.5 rounded-full border-0 bg-[#f1f1f2] px-3.5 text-sm font-medium text-[#3a3a3c] hover:bg-[#e8e8ea]"
+        title="模型选择"
+      >
         Step 4 Flash <Chevron />
       </button>
       <button
-        className={`icon-btn mic tip tip--end ${hasText ? '' : 'mic--merged'}`}
+        type="button"
+        className={cn(
+          'tip tip--end inline-flex h-[38px] w-[38px] cursor-pointer items-center justify-center rounded-full border-0 transition-[transform,background] duration-150 active:scale-[0.92]',
+          hasText
+            ? 'bg-[#f1f1f2] text-[#3a3a3c] hover:bg-[#e8e8ea]'
+            : 'bg-dark-btn text-white hover:bg-black',
+        )}
         onClick={onMic}
         data-tip="按住 Ctrl / ⌘ 语音输入"
       >
         <MicIcon />
       </button>
-      {/* 发送按钮常驻，通过 CSS 在合并/展开间做 100ms 过渡 */}
+      {/* 发送按钮常驻，通过 width/opacity 在合并/展开间做 100ms 过渡 */}
       <button
-        className={`icon-btn send ${hasText ? '' : 'send--hidden'}`}
+        type="button"
+        className={cn(
+          'inline-flex h-[38px] cursor-pointer items-center justify-center overflow-hidden rounded-full border-0 bg-dark-btn text-white transition-[width,padding,opacity,transform,margin] duration-100 hover:bg-black',
+          hasText
+            ? 'w-[38px] opacity-100'
+            : 'pointer-events-none -ml-2.5 w-0 min-w-0 p-0 scale-[0.6] opacity-0',
+        )}
         onClick={onSend}
         title="发送"
         tabIndex={hasText ? 0 : -1}
@@ -295,29 +316,40 @@ function Controls({ hasText, onMic, onSend }) {
 function VoiceBar({ mode, onUndo, onStop }) {
   const isHold = mode === 'voice-hold'
   return (
-    <div className="voice-bar">
+    <div className="flex items-center gap-0">
       {isHold ? (
-        <span className="release-hint">
+        <span className="flex h-[38px] w-[38px] shrink-0 flex-col items-center justify-center whitespace-nowrap text-[13px] leading-[1.15] text-muted-2">
           <span>松开</span>
           <span>退出</span>
         </span>
       ) : (
-        <button className="undo-btn tip tip--start" onClick={onUndo} data-tip="Esc 撤回并退出">
+        <button
+          type="button"
+          className="tip tip--start inline-flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-[#3a3a3c] transition-[background,color,transform] duration-150 hover:bg-[#ffe3e3] hover:text-[#e5484d] active:scale-[0.92]"
+          onClick={onUndo}
+          data-tip="Esc 撤回并退出"
+        >
           <UndoIcon />
         </button>
       )}
 
-      <Waveform className="wave" />
+      {/* 两端渐隐遮罩，让波形与按钮过渡更柔和 */}
+      <Waveform className="min-w-0 flex-1 [mask-image:linear-gradient(to_right,transparent_0,#000_76px,#000_calc(100%-76px),transparent_100%)] [-webkit-mask-image:linear-gradient(to_right,transparent_0,#000_76px,#000_calc(100%-76px),transparent_100%)]" />
 
-      <button className="stop-btn tip tip--end" onClick={onStop} data-tip="Enter 采用并退出">
-        <span className="stop-square" />
+      <button
+        type="button"
+        className="tip tip--end inline-flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-dark-btn transition-[transform,background] duration-150 hover:bg-black active:scale-[0.92]"
+        onClick={onStop}
+        data-tip="Enter 采用并退出"
+      >
+        <span className="h-[13px] w-[13px] rounded-[3px] bg-white" />
       </button>
     </div>
   )
 }
 
 /* ---------------- 说明浮层 ---------------- */
-function Legend({ mode }) {
+function Legend() {
   const items = [
     { key: 'idle', text: '空态：麦克风与发送合并，黑底强调' },
     { key: 'merge', text: '有字/空态切换：麦克风 ↔ 发送 100ms 过渡' },
@@ -326,23 +358,40 @@ function Legend({ mode }) {
     { key: 'edit', text: '语音中可继续打字，按光标插入识别文字' },
   ]
   return (
-    <div className="legend">
-      <p>试一试：</p>
-      <ul>
-        <li>直接键入文字 → 出现发送按钮；<kbd>Enter</kbd> 发送、<kbd>Shift</kbd>+<kbd>Enter</kbd> 换行（分支一）</li>
-        <li>点击 🎙 麦克风 → 进入语音，只能点按钮退出，左侧可「撤回」；<kbd>Esc</kbd> 撤回并退出、<kbd>Enter</kbd> 采用并退出（分支二）</li>
-        <li>按住 <kbd>Ctrl</kbd> / <kbd>⌘</kbd> 约 0.4s → 进入语音，松开即退出、更轻更快（分支三）</li>
+    <div className="mx-1 mt-[22px] text-[13px] text-[#b9b9bc]">
+      <p className="mb-1.5 mt-0 text-[#8f8f92]">试一试：</p>
+      <ul className="mb-3.5 ml-0 list-disc py-0 pl-[18px] leading-[1.7]">
+        <li>
+          直接键入文字 → 出现发送按钮；<Kbd>Enter</Kbd> 发送、<Kbd>Shift</Kbd>+<Kbd>Enter</Kbd>{' '}
+          换行（分支一）
+        </li>
+        <li>
+          点击 🎙 麦克风 → 进入语音，只能点按钮退出，左侧可「撤回」；<Kbd>Esc</Kbd> 撤回并退出、
+          <Kbd>Enter</Kbd> 采用并退出（分支二）
+        </li>
+        <li>
+          按住 <Kbd>Ctrl</Kbd> / <Kbd>⌘</Kbd> 约 0.4s → 进入语音，松开即退出、更轻更快（分支三）
+        </li>
         <li>语音输入过程中 textarea 不禁用：可继续手动编辑，识别文字实时插入到当前光标位置</li>
         <li>hover 任意带快捷键的按钮 0.4s → 弹出快捷键提示</li>
       </ul>
-      <div className="legend-tags">
+      <div className="flex flex-wrap gap-2">
         {items.map((it) => (
-          <span key={it.key} className="tag">
+          <span
+            key={it.key}
+            className="rounded-lg bg-accent px-2.5 py-1.5 text-xs font-semibold text-ink"
+          >
             {it.text}
           </span>
         ))}
       </div>
     </div>
+  )
+}
+
+function Kbd({ children }) {
+  return (
+    <kbd className="rounded-[5px] bg-[#4a4a4c] px-1.5 py-px text-xs text-white">{children}</kbd>
   )
 }
 
@@ -380,7 +429,7 @@ function UndoIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
       <path d="M9 14L4 9l5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4 9h11a5 5 0 0 1 0 10h-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 9h11a5 5 0 0 1 0 10h-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   )
 }

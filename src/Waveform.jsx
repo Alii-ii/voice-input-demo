@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { cn } from './lib/cn.js'
 
 const BARS = 56
 
@@ -30,9 +31,18 @@ export default function Waveform({ className = '' }) {
   }, [])
 
   return (
-    <div className={`waveform ${className}`}>
+    <div
+      className={cn(
+        'flex h-[38px] w-full items-center justify-between gap-0 overflow-hidden',
+        className,
+      )}
+    >
       {heights.map((h, i) => (
-        <span key={i} className="wf-bar" style={{ height: `${(h * 100).toFixed(1)}%` }} />
+        <span
+          key={i}
+          className="w-[3px] rounded-full bg-[#2f2f31] transition-[height] duration-[90ms] linear"
+          style={{ height: `${(h * 100).toFixed(1)}%` }}
+        />
       ))}
     </div>
   )

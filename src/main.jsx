@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import ChatLab from './chat/ChatLab.jsx'
+import { cn } from './lib/cn.js'
 import './index.css'
 
 /**
@@ -50,12 +51,18 @@ function Root() {
   }
 
   return (
-    <div className="app-root">
-      <div className="app-tabs">
+    <div className="flex h-screen flex-col overflow-hidden">
+      <div className="flex shrink-0 gap-1.5 border-b border-[#3a3a3c] bg-[rgba(28,28,30,0.7)] px-4 py-2.5">
         {ROUTES.map((r) => (
           <button
             key={r.key}
-            className={tab === r.key ? 'app-tab is-on' : 'app-tab'}
+            type="button"
+            className={cn(
+              'cursor-pointer rounded-[9px] border border-transparent px-3 py-1.5 text-[13px]',
+              tab === r.key
+                ? 'border-[#46464a] bg-ink text-white'
+                : 'bg-transparent text-muted',
+            )}
             onClick={() => go(r.key)}
           >
             {r.label}
@@ -63,7 +70,7 @@ function Root() {
         ))}
       </div>
       {/* chat：整页恒 100vh，滚动只发生在对话窗口内；voice：仍允许整页滚动 */}
-      <div className={tab === 'chat' ? 'app-body app-body--fixed' : 'app-body'}>
+      <div className={cn('min-h-0 flex-1', tab === 'chat' ? 'overflow-hidden' : 'overflow-auto')}>
         {tab === 'chat' ? <ChatLab /> : <App />}
       </div>
     </div>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ChatPanel from './ChatPanel.jsx'
 import { makeConversation, PRESETS } from './mockData.js'
-import './chat.css'
+import { cn } from '../lib/cn.js'
 
 /**
  * ChatLab：对话 Minimap 实验台（左右布局）
@@ -42,41 +42,41 @@ export default function ChatLab() {
   const minimapProps = { itemSize, hoverRow, dotLen, hoverMax, gap, lensRange, side }
 
   return (
-    <div className="lab">
-      <div className="lab-split">
-        <aside className="lab-side">
-          <header className="lab-head">
-            <h1>对话 Minimap 实验台</h1>
-            <p className="lab-sub">
+    <div className="h-full overflow-hidden px-4 pb-4 pt-3.5 text-[#eaeaea]">
+      <div className="flex h-full min-h-0 gap-4">
+        <aside className="flex min-h-0 w-[clamp(300px,34%,440px)] shrink-0 flex-col gap-3 overflow-hidden">
+          <header>
+            <h1 className="mb-1 text-lg text-[#f2f2f4]">对话 Minimap 实验台</h1>
+            <p className="m-0 text-xs leading-normal text-[#8f8f92]">
               fork Chat Minimap（固定密度）· 居中胶片 + 鱼眼 · 极端轮次不撑爆
             </p>
           </header>
 
-          <div className="lab-controls">
-            <div className="ctrl-group">
-              <span className="ctrl-label">数据档位</span>
-              <div className="seg">
+          <div className="flex flex-col gap-3 rounded-2xl border border-[#3a3a3c] bg-[#262627] px-4 py-3.5">
+            <div className="flex flex-col gap-2">
+              <span className="text-xs text-muted-2">数据档位</span>
+              <div className="inline-flex flex-wrap gap-1.5">
                 {PRESETS.map((p) => (
-                  <button
+                  <SegBtn
                     key={p.key}
-                    className={presetKey === p.key ? 'seg-btn is-on' : 'seg-btn'}
+                    active={presetKey === p.key}
                     onClick={() => setPresetKey(p.key)}
                   >
                     {p.label}
-                  </button>
+                  </SegBtn>
                 ))}
               </div>
             </div>
 
-            <div className="ctrl-group">
-              <span className="ctrl-label">贴边</span>
-              <div className="seg">
-                <button className={side === 'left' ? 'seg-btn is-on' : 'seg-btn'} onClick={() => setSide('left')}>
+            <div className="flex flex-col gap-2">
+              <span className="text-xs text-muted-2">贴边</span>
+              <div className="inline-flex flex-wrap gap-1.5">
+                <SegBtn active={side === 'left'} onClick={() => setSide('left')}>
                   左
-                </button>
-                <button className={side === 'right' ? 'seg-btn is-on' : 'seg-btn'} onClick={() => setSide('right')}>
+                </SegBtn>
+                <SegBtn active={side === 'right'} onClick={() => setSide('right')}>
                   右
-                </button>
+                </SegBtn>
               </div>
             </div>
 
@@ -89,21 +89,29 @@ export default function ChatLab() {
           </div>
 
           {/* 判定条：说明当前是否进入胶片跟随模式 */}
-          <div className={`verdict ${overflow ? 'verdict--film' : 'verdict--ok'}`}>
-            <div className="verdict-main">
-              <strong>{turns}</strong> 轮 / {messages.length} 条 · 胶片{' '}
-              <strong>{filmH}px</strong> · 视口 <strong>{Math.round(panelH)}px</strong>
+          <div
+            className={cn(
+              'mb-3.5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[14px] border px-4 py-3 text-[13px]',
+              overflow
+                ? 'border-[rgba(90,160,255,0.45)] bg-[rgba(90,160,255,0.1)] text-[#a9cbff]'
+                : 'border-[rgba(52,199,89,0.4)] bg-[rgba(52,199,89,0.1)] text-[#a7e5b5]',
+            )}
+          >
+            <div>
+              <strong className="text-[#f2f2f4]">{turns}</strong> 轮 / {messages.length} 条 · 胶片{' '}
+              <strong className="text-[#f2f2f4]">{filmH}px</strong> · 视口{' '}
+              <strong className="text-[#f2f2f4]">{Math.round(panelH)}px</strong>
             </div>
-            <div className="verdict-badge">
+            <div className="ml-auto font-bold tracking-wide">
               {overflow ? `胶片模式 · 全长 ${filmRatio.toFixed(1)} 屏但不撑爆` : '✓ 全部可见 · active 恒居中'}
             </div>
-            <div className="verdict-hint">
+            <div className="basis-full text-xs opacity-[0.85]">
               一轮一条轴；active 恒钉中线；视口内多轮同时高亮；滚轮只滚对话；hover 处最长按距离递减。
             </div>
           </div>
         </aside>
 
-        <main className="lab-stage" ref={wrapRef}>
+        <main className="min-h-0 min-w-0 flex-1" ref={wrapRef}>
           <ChatPanel messages={messages} minimapProps={minimapProps} />
         </main>
       </div>
@@ -111,14 +119,36 @@ export default function ChatLab() {
   )
 }
 
+function SegBtn({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        'cursor-pointer rounded-[9px] border px-2.5 py-1.5 text-xs transition-all duration-100',
+        active
+          ? 'border-accent bg-accent font-semibold text-ink'
+          : 'border-[#46464a] bg-ink text-[#cfcfd2] hover:border-[#6a6a6f]',
+      )}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  )
+}
+
 function Slider({ label, value, min, max, step = 1, unit, onChange }) {
   return (
-    <label className="slider">
-      <span className="slider-label">
-        {label} <b>{value}{unit}</b>
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs text-muted-2">
+        {label}{' '}
+        <b className="ml-1 font-semibold text-accent">
+          {value}
+          {unit}
+        </b>
       </span>
       <input
         type="range"
+        className="w-full accent-accent"
         min={min}
         max={max}
         step={step}
