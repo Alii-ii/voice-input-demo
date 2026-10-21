@@ -2,18 +2,21 @@ import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import ChatLab from './chat/ChatLab.jsx'
+import InspectLab from './inspect/InspectLab.jsx'
 import { cn } from './lib/cn.js'
 import './index.css'
 
 /**
  * 极简 hash 路由（适配 GitHub Pages 静态托管：deep-link 免服务端 rewrite）
- *  - #/chat  → 对话 Minimap 实验台
- *  - #/voice → 语音输入交互探索
+ *  - #/chat    → 对话 Minimap 实验台
+ *  - #/voice   → 语音输入交互探索
+ *  - #/inspect → 移动端点选编辑
  *  分享 URL 自带 hash 即可直达对应 demo，无需手动切 tab。
  */
 const ROUTES = [
   { key: 'chat', hash: '#/chat', label: '对话 Minimap 实验台', title: '对话 Minimap 实验台' },
   { key: 'voice', hash: '#/voice', label: '语音输入交互探索', title: '语音输入交互探索' },
+  { key: 'inspect', hash: '#/inspect', label: '移动端点选', title: '移动端点选编辑' },
 ]
 const DEFAULT_KEY = 'chat'
 
@@ -69,9 +72,11 @@ function Root() {
           </button>
         ))}
       </div>
-      {/* chat：整页恒 100vh，滚动只发生在对话窗口内；voice：仍允许整页滚动 */}
-      <div className={cn('min-h-0 flex-1', tab === 'chat' ? 'overflow-hidden' : 'overflow-auto')}>
-        {tab === 'chat' ? <ChatLab /> : <App />}
+      {/* chat / inspect：整页锁在视口内；voice：仍允许整页滚动 */}
+      <div className={cn('min-h-0 flex-1', tab === 'voice' ? 'overflow-auto' : 'overflow-hidden')}>
+        {tab === 'chat' && <ChatLab />}
+        {tab === 'voice' && <App />}
+        {tab === 'inspect' && <InspectLab />}
       </div>
     </div>
   )
