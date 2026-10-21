@@ -55,13 +55,14 @@ function Root() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      <div className="flex shrink-0 gap-1.5 border-b border-[#3a3a3c] bg-[rgba(28,28,30,0.7)] px-4 py-2.5">
+      {/* 窄屏顶栏横向滚动，tab 不换行、不挤扁 */}
+      <div className="flex min-w-0 shrink-0 flex-nowrap gap-1.5 overflow-x-auto border-b border-[#3a3a3c] bg-[rgba(28,28,30,0.7)] px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {ROUTES.map((r) => (
           <button
             key={r.key}
             type="button"
             className={cn(
-              'cursor-pointer rounded-[9px] border border-transparent px-3 py-1.5 text-[13px]',
+              'shrink-0 cursor-pointer whitespace-nowrap rounded-[9px] border border-transparent px-3 py-1.5 text-[13px]',
               tab === r.key
                 ? 'border-[#46464a] bg-ink text-white'
                 : 'bg-transparent text-muted',

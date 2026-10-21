@@ -1,5 +1,7 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
+import { flushSync } from 'react-dom'
 import AgentPhrase from './AgentPhrase.jsx'
+import { SoloScrollLine, SoloWave } from './SoloComposer.jsx'
 
 /**
  * 预览页外层的系统框：状态栏、顶部模式切换、底部全屏和一行输入。
@@ -29,15 +31,42 @@ function scrollCaretIntoView(el, caret) {
   else if (width > el.scrollLeft + view - padding) el.scrollLeft = Math.max(0, width - view + padding)
 }
 
-export default function DeviceFrame({ fabSlotRef, text = '', caret = 0, running = false, onActivate, onStop }) {
+export default function DeviceFrame({
+  fabSlotRef,
+  text = '',
+  caret = 0,
+  running = false,
+  onActivate,
+  onStop,
+  onInsert,
+  solo = null,
+}) {
   const inputRef = useRef(null)
+  const onInsertRef = useRef(onInsert)
+  onInsertRef.current = onInsert
+  const dictating = !!solo
+
+  // 直接听原生 compositionend。组词过程不改草稿，上屏整段再插入
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return undefined
+    const onCompositionEnd = (e) => {
+      if (el.readOnly) return
+      const data = e.data
+      if (!data) return
+      // 上屏后立刻写进受控 value，避免读到组词前的旧文本
+      flushSync(() => onInsertRef.current?.(data))
+    }
+    el.addEventListener('compositionend', onCompositionEnd)
+    return () => el.removeEventListener('compositionend', onCompositionEnd)
+  }, [])
 
   // 内容变化时把光标或末尾留在胶囊里，不把整行撑开
   useLayoutEffect(() => {
     const el = inputRef.current
-    if (!el || running) return
+    if (!el || running || dictating) return
     scrollCaretIntoView(el, caret)
-  }, [text, caret, running])
+  }, [text, caret, running, dictating])
 
   return (
     <div className="pointer-events-none absolute inset-0" data-inspect-ui>
@@ -81,71 +110,107 @@ export default function DeviceFrame({ fabSlotRef, text = '', caret = 0, running 
       </div>
 
       {/* 底栏按钮同样浮在遮罩上，整条灰底不再挡住遮罩 */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-[14px] z-30 flex items-center gap-2.5 px-4">
+      {/* 胶囊下方始终留出语音轴高度，听写开关时输入框不跳动；非听写只留空 */}
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-[6px] z-30 flex items-start gap-2.5 px-4"
+        data-solo={dictating ? 'true' : undefined}
+      >
         <CircleButton label="全屏">
           <FullscreenIcon />
         </CircleButton>
 
-        <div
-          className="flex h-12 min-w-0 flex-1 items-center rounded-full bg-white pl-3 pr-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.06)]"
-          data-inspect-ui
-          data-inspect-chrome
-          style={{ pointerEvents: 'auto' }}
-        >
-          <button
-            type="button"
-            aria-label="添加"
+        <div className="min-w-0 flex-1">
+          <div
+            className={
+              'flex h-12 min-w-0 items-center rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] ' +
+              (dictating ? 'px-4' : 'pl-3 pr-1.5')
+            }
+            data-inspect-ui
             data-inspect-chrome
-            className="flex h-8 w-8 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-[#8a8a8e]"
+            style={{ pointerEvents: 'auto' }}
           >
-            <PlusIcon />
-          </button>
-          {/* 空闲显示草稿；进行中改展示进程文案，不和草稿叠在一起 */}
-          <div className="relative h-6 min-w-0 flex-1 overflow-hidden">
-            <textarea
-              ref={inputRef}
-              rows={1}
-              wrap="off"
-              readOnly
-              tabIndex={-1}
-              aria-label={running ? 'Agent 进行中' : text ? '选区输入' : '按住说话'}
-              placeholder={running ? '' : 'Hold to talk...'}
-              value={running ? '' : text}
-              style={{ height: 24, minHeight: 24, maxHeight: 24 }}
-              className="box-border block h-6 w-full min-w-0 resize-none overflow-x-auto overflow-y-hidden whitespace-nowrap border-0 bg-transparent px-0 py-0 text-[15px] leading-6 text-[#1c1c1e] outline-none placeholder:text-[#b1b1b6]"
-              onPointerDown={(e) => {
-                if (e.button !== 0) return
-                e.preventDefault()
-                if (running || !text) return
-                onActivate?.()
-              }}
-            />
-            {running ? <AgentPhrase /> : null}
+            {dictating ? null : (
+              <button
+                type="button"
+                aria-label="添加"
+                data-inspect-chrome
+                className="flex h-8 w-8 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-[#8a8a8e]"
+              >
+                <PlusIcon />
+              </button>
+            )}
+            {/* 空闲显示草稿；进行中改展示进程文案，不和草稿叠在一起 */}
+            <div className="relative h-6 min-w-0 flex-1 overflow-hidden">
+              <textarea
+                ref={inputRef}
+                rows={1}
+                wrap="off"
+                readOnly={running || dictating}
+                data-inspect-ime="bar"
+                aria-label={running ? 'Agent 进行中' : dictating ? '听写输入' : text ? '选区输入' : '按住说话'}
+                placeholder={running || dictating ? '' : 'Hold to talk...'}
+                value={running || dictating ? '' : text}
+                onChange={() => {
+                  // value 始终跟草稿 plainText，上屏文字在 compositionend 写入
+                }}
+                style={{ height: 24, minHeight: 24, maxHeight: 24 }}
+                className={
+                  'box-border block h-6 w-full min-w-0 resize-none overflow-x-auto overflow-y-hidden whitespace-nowrap border-0 bg-transparent px-0 py-0 text-[15px] leading-6 text-[#1c1c1e] outline-none placeholder:text-[#b1b1b6]' +
+                  (dictating ? ' pointer-events-none' : '')
+                }
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return
+                  // 听写中不把焦点送进这条框，避免组词写进多选草稿
+                  if (dictating) {
+                    e.preventDefault()
+                    return
+                  }
+                  // 不阻止默认聚焦，桌面拼音才能在这条单行框里组词
+                  if (running || !text) return
+                  onActivate?.()
+                }}
+              />
+              {running && !dictating ? <AgentPhrase /> : null}
+              {dictating ? (
+                <div className="absolute inset-0">
+                  <SoloScrollLine
+                    prefix={solo.prefix}
+                    label={solo.label}
+                    summary={solo.summary}
+                    speech={solo.speech}
+                  />
+                </div>
+              ) : null}
+            </div>
+            {dictating ? null : running ? (
+              <button
+                type="button"
+                aria-label="停止"
+                data-inspect-chrome
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-[#1c1c1e] p-0 text-white"
+                onPointerDown={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onStop?.()
+                }}
+              >
+                <span className="block h-[11px] w-[11px] rounded-[3px] bg-white" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                aria-label="按住说话"
+                data-inspect-chrome
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-[#1c1c1e] p-0 text-white"
+              >
+                <MicIcon />
+              </button>
+            )}
           </div>
-          {running ? (
-            <button
-              type="button"
-              aria-label="停止"
-              data-inspect-chrome
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-[#1c1c1e] p-0 text-white"
-              onPointerDown={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                onStop?.()
-              }}
-            >
-              <span className="block h-[11px] w-[11px] rounded-[3px] bg-white" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              aria-label="按住说话"
-              data-inspect-chrome
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-[#1c1c1e] p-0 text-white"
-            >
-              <MicIcon />
-            </button>
-          )}
+          {/* 和听写波形同一块高度；没在听写时不画条，避免底栏被顶上去 */}
+          <div className="pointer-events-none mt-1 h-[18px] px-1">
+            {dictating ? <SoloWave /> : null}
+          </div>
         </div>
 
         {/* 点选按钮挂在这里，和全屏、输入框同一行 */}

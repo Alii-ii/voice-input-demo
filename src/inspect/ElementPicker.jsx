@@ -457,15 +457,17 @@ export default function ElementPicker({
       data-inspect-ui
       data-inspect-chrome
       aria-pressed={active || solo}
-      aria-label={solo ? '单选听写' : active ? '退出点选' : '进入点选'}
-      title={solo ? '单选听写' : active ? '退出点选' : '进入点选'}
+      aria-label={solo ? '松开并发送' : active ? '退出点选' : '进入点选'}
+      title={solo ? '松开并发送' : active ? '退出点选' : '进入点选'}
       style={parked ? { pointerEvents: 'auto' } : { pointerEvents: 'auto', bottom: docked ? 72 : 18 }}
       className={cn(
         'z-40 flex h-12 w-12 touch-none cursor-pointer items-center justify-center rounded-full border-0 bg-white text-black/90 shadow-[0_2px_10px_rgba(0,0,0,0.06)] transition-[bottom,transform,box-shadow,color] duration-150',
         parked ? 'relative' : 'absolute right-3.5',
-        active || solo
-          ? 'text-[#1a8cff] shadow-[0_8px_28px_rgba(26,140,255,0.35)]'
-          : 'hover:scale-105 active:scale-95',
+        solo
+          ? ''
+          : active
+            ? 'text-[#1a8cff] shadow-[0_8px_28px_rgba(26,140,255,0.35)]'
+            : 'hover:scale-105 active:scale-95',
       )}
       onPointerDown={(e) => {
         if (e.button !== 0) return
@@ -493,7 +495,15 @@ export default function ElementPicker({
         }
       }}
     >
-      <InspectIcon />
+      {/* 听写态只换文案，松手仍是原来的选定元素并发送 */}
+      {solo ? (
+        <span className="flex flex-col items-center justify-center whitespace-nowrap text-center text-[11px] leading-none text-[#8e8e93]">
+          <span>松开</span>
+          <span className="mt-px">发送</span>
+        </span>
+      ) : (
+        <InspectIcon />
+      )}
     </button>
   )
 

@@ -3,7 +3,6 @@ import DeviceFrame from './DeviceFrame.jsx'
 import { startDictation } from './dictation.js'
 import ElementPicker from './ElementPicker.jsx'
 import SelectionEditor from './SelectionEditor.jsx'
-import SoloComposer from './SoloComposer.jsx'
 import StudyRoomPage from './StudyRoomPage.jsx'
 import { backspace, createDraft, insertTag, insertText, moveCursor, plainCaret, plainText } from './selectionDraft.js'
 import { appendSoloSpeech, createSoloDraft, formatSoloMessage, replaceSoloTag } from './soloDraft.js'
@@ -202,13 +201,22 @@ export default function InspectLab() {
             if (regionsRef.current.length > 0) setEditing(true)
           }}
           onStop={stopRunning}
+          onInsert={onInsert}
+          solo={
+            soloDraft
+              ? {
+                  prefix: plainText(draft.segments),
+                  label: soloDraft.tag?.text || '',
+                  summary: soloDraft.tag?.summary || '',
+                  speech: soloDraft.speech || '',
+                }
+              : null
+          }
         />
         <p className="pointer-events-none sr-only" data-inspect-ui data-last-sent={lastSent}>
           {lastSent}
         </p>
-        {soloDraft ? (
-          <SoloComposer draft={soloDraft} />
-        ) : editing ? (
+        {!soloDraft && editing ? (
           <SelectionEditor
             expanded
             segments={draft.segments}

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { flushSync } from 'react-dom'
 import EditorVoiceBar from './EditorVoiceBar.jsx'
 import IosKeyboard from './IosKeyboard.jsx'
 import SelectionField from './SelectionField.jsx'
@@ -33,14 +34,39 @@ export default function SelectionEditor({
   const voiceModeRef = useRef(voice.mode)
   const keepVoiceRef = useRef(voice.keepAndExit)
   const undoVoiceRef = useRef(voice.undoAndExit)
+  const imeRef = useRef(null)
   voiceModeRef.current = voice.mode
   keepVoiceRef.current = voice.keepAndExit
   undoVoiceRef.current = voice.undoAndExit
 
-  // 只有键盘修改态接收实体按键；收起后页面点选继续用同一份草稿
+  // 展开后把焦点放进这条看不见的框，桌面拼音才有地方组词
   useEffect(() => {
     if (!expanded) return undefined
+    imeRef.current?.focus({ preventScroll: true })
+    return undefined
+  }, [expanded])
+
+  // 只有键盘修改态接收实体按键；收起后页面点选继续用同一份草稿。
+  // 组词中不 preventDefault、不逐字母插入；上屏整段走 compositionend。
+  useEffect(() => {
+    if (!expanded) return undefined
+    let composing = false
+    const imeKey = (e) => composing || e.isComposing || e.keyCode === 229 || e.key === 'Process'
+    const onCompositionStart = () => {
+      composing = true
+    }
+    const onCompositionEnd = (e) => {
+      composing = false
+      const target = e.target
+      // 底栏那条真实输入自己写入草稿，避免同一段中文插两次
+      if (target instanceof Element && target.dataset.inspectIme === 'bar') return
+      if (imeRef.current && target === imeRef.current) imeRef.current.value = ''
+      const data = e.data
+      if (data) flushSync(() => onInsertRef.current(data))
+    }
     const onKey = (e) => {
+      // 退格和字母都留给输入法，等 compositionend 再整段插入
+      if (imeKey(e)) return
       const voiceMode = voiceModeRef.current
       // 点击进入的语音：Esc 撤回，Enter 采用。和语音页同一套，不收起键盘
       if (voiceMode === 'voice-click' && (e.key === 'Escape' || e.key === 'Enter')) {
@@ -84,7 +110,13 @@ export default function SelectionEditor({
       }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('compositionstart', onCompositionStart)
+    window.addEventListener('compositionend', onCompositionEnd)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('compositionstart', onCompositionStart)
+      window.removeEventListener('compositionend', onCompositionEnd)
+    }
   }, [expanded])
 
   if (!expanded) {
@@ -104,7 +136,21 @@ export default function SelectionEditor({
     >
       <div className="px-3 pb-2">
         <div className="rounded-[22px] bg-white px-3.5 pb-2.5 pt-3 shadow-[0_10px_30px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.04]">
-          <SelectionField segments={segments} cursor={cursor} showCaret />
+          <div className="relative">
+            <SelectionField segments={segments} cursor={cursor} showCaret />
+            {/* 只接输入法，不另画一行；文字仍由上方草稿展示 */}
+            <textarea
+              ref={imeRef}
+              rows={1}
+              wrap="off"
+              data-inspect-ime="editor"
+              aria-label="拼音输入"
+              autoComplete="off"
+              spellCheck={false}
+              style={{ height: 40, minHeight: 40, maxHeight: 40 }}
+              className="absolute inset-0 z-10 box-border block w-full resize-none overflow-hidden whitespace-nowrap border-0 bg-transparent px-3.5 py-0 text-[16px] leading-10 text-transparent caret-transparent outline-none"
+            />
+          </div>
 
           {voice.active ? (
             <EditorVoiceBar mode={voice.mode} onUndo={voice.undoAndExit} onStop={voice.keepAndExit} />
