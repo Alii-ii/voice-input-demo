@@ -11,6 +11,17 @@ export function plainText(segments) {
   return segments.map((seg) => (seg.type === 'tag' ? seg.label || `选区${seg.n}` : seg.value)).join('')
 }
 
+/** 光标在 plainText 中的位置，单行输入据此把插入点滚进可视区 */
+export function plainCaret(segments, cursor) {
+  let pos = 0
+  for (let i = 0; i < segments.length; i += 1) {
+    if (cursor && i === cursor.i) return pos + (cursor.offset || 0)
+    const seg = segments[i]
+    pos += seg.type === 'tag' ? (seg.label || `选区${seg.n}`).length : (seg.value || '').length
+  }
+  return pos
+}
+
 /** 在光标处插入普通文本 */
 export function insertText(draft, text) {
   if (!text) return draft

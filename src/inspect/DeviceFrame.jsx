@@ -1,0 +1,285 @@
+import { useLayoutEffect, useRef } from 'react'
+import AgentPhrase from './AgentPhrase.jsx'
+
+/**
+ * 预览页外层的系统框：状态栏、顶部模式切换、底部全屏和一行输入。
+ * 点选按钮由 ElementPicker 挂进 fabSlotRef。
+ * 键盘没收起时，多选草稿写在底部这枚单行 textarea 里。
+ * 点选遮罩盖住整框，含状态栏和按钮之间的空隙；只有上下系统按钮浮在遮罩上。
+ */
+
+/** 按纯文本宽度把光标滚进 textarea 的可视区，高度仍锁在一行 */
+function scrollCaretIntoView(el, caret) {
+  const view = el.clientWidth
+  if (view <= 0) return
+  const pos = Math.max(0, Math.min(caret ?? el.value.length, el.value.length))
+  const style = getComputedStyle(el)
+  const mirror = document.createElement('span')
+  mirror.textContent = el.value.slice(0, pos)
+  mirror.style.position = 'absolute'
+  mirror.style.visibility = 'hidden'
+  mirror.style.whiteSpace = 'pre'
+  mirror.style.font = style.font
+  mirror.style.letterSpacing = style.letterSpacing
+  document.body.appendChild(mirror)
+  const width = mirror.getBoundingClientRect().width
+  mirror.remove()
+  const padding = 8
+  if (width < el.scrollLeft + padding) el.scrollLeft = Math.max(0, width - padding)
+  else if (width > el.scrollLeft + view - padding) el.scrollLeft = Math.max(0, width - view + padding)
+}
+
+export default function DeviceFrame({ fabSlotRef, text = '', caret = 0, running = false, onActivate, onStop }) {
+  const inputRef = useRef(null)
+
+  // 内容变化时把光标或末尾留在胶囊里，不把整行撑开
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el || running) return
+    scrollCaretIntoView(el, caret)
+  }, [text, caret, running])
+
+  return (
+    <div className="pointer-events-none absolute inset-0" data-inspect-ui>
+      <header
+        aria-label="状态栏"
+        className="absolute inset-x-0 top-0 flex h-[52px] items-center justify-between px-[22px] text-[15px] font-semibold tracking-[-0.02em] text-[#111113]"
+      >
+        <span>9:41</span>
+        <span className="flex items-center gap-[5px]">
+          <SignalIcon />
+          <WifiIcon />
+          <BatteryIcon />
+        </span>
+      </header>
+
+      {/* 五个独立白控件，浮在点选遮罩之上；间隙不挡遮罩 */}
+      <div className="pointer-events-none absolute inset-x-0 top-[50px] z-30 flex items-center justify-center gap-3 px-4">
+        <CircleButton label="返回">
+          <ChevronLeftIcon />
+        </CircleButton>
+        <CircleButton label="对话">
+          <ChatIcon />
+        </CircleButton>
+        <button
+          type="button"
+          aria-pressed="true"
+          data-inspect-ui
+          data-inspect-chrome
+          className="flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-full border-0 bg-white px-4 text-[15px] font-medium tracking-[-0.01em] text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)]"
+          style={{ pointerEvents: 'auto' }}
+        >
+          <PhoneIcon />
+          Preview
+        </button>
+        <CircleButton label="桌面预览">
+          <MonitorIcon />
+        </CircleButton>
+        <CircleButton label="工具">
+          <WrenchIcon />
+        </CircleButton>
+      </div>
+
+      {/* 底栏按钮同样浮在遮罩上，整条灰底不再挡住遮罩 */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-[14px] z-30 flex items-center gap-2.5 px-4">
+        <CircleButton label="全屏">
+          <FullscreenIcon />
+        </CircleButton>
+
+        <div
+          className="flex h-12 min-w-0 flex-1 items-center rounded-full bg-white pl-3 pr-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.06)]"
+          data-inspect-ui
+          data-inspect-chrome
+          style={{ pointerEvents: 'auto' }}
+        >
+          <button
+            type="button"
+            aria-label="添加"
+            data-inspect-chrome
+            className="flex h-8 w-8 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-[#8a8a8e]"
+          >
+            <PlusIcon />
+          </button>
+          {/* 空闲显示草稿；进行中改展示进程文案，不和草稿叠在一起 */}
+          <div className="relative h-6 min-w-0 flex-1 overflow-hidden">
+            <textarea
+              ref={inputRef}
+              rows={1}
+              wrap="off"
+              readOnly
+              tabIndex={-1}
+              aria-label={running ? 'Agent 进行中' : text ? '选区输入' : '按住说话'}
+              placeholder={running ? '' : 'Hold to talk...'}
+              value={running ? '' : text}
+              style={{ height: 24, minHeight: 24, maxHeight: 24 }}
+              className="box-border block h-6 w-full min-w-0 resize-none overflow-x-auto overflow-y-hidden whitespace-nowrap border-0 bg-transparent px-0 py-0 text-[15px] leading-6 text-[#1c1c1e] outline-none placeholder:text-[#b1b1b6]"
+              onPointerDown={(e) => {
+                if (e.button !== 0) return
+                e.preventDefault()
+                if (running || !text) return
+                onActivate?.()
+              }}
+            />
+            {running ? <AgentPhrase /> : null}
+          </div>
+          {running ? (
+            <button
+              type="button"
+              aria-label="停止"
+              data-inspect-chrome
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-[#1c1c1e] p-0 text-white"
+              onPointerDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onStop?.()
+              }}
+            >
+              <span className="block h-[11px] w-[11px] rounded-[3px] bg-white" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              aria-label="按住说话"
+              data-inspect-chrome
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-[#1c1c1e] p-0 text-white"
+            >
+              <MicIcon />
+            </button>
+          )}
+        </div>
+
+        {/* 点选按钮挂在这里，和全屏、输入框同一行 */}
+        <div ref={fabSlotRef} className="h-12 w-12 shrink-0" />
+      </div>
+    </div>
+  )
+}
+
+function CircleButton({ label, children, bare = false }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      data-inspect-ui
+      data-inspect-chrome
+      style={{ pointerEvents: 'auto' }}
+      className={
+        bare
+          ? 'flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-[#1c1c1e]'
+          : 'flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-0 bg-white p-0 text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)]'
+      }
+    >
+      {children}
+    </button>
+  )
+}
+
+function SignalIcon() {
+  return (
+    <svg width="17" height="12" viewBox="0 0 17 12" fill="currentColor" aria-hidden="true">
+      <rect x="0" y="8" width="3" height="4" rx="0.6" />
+      <rect x="4.5" y="5.5" width="3" height="6.5" rx="0.6" />
+      <rect x="9" y="3" width="3" height="9" rx="0.6" />
+      <rect x="13.5" y="0.5" width="3" height="11.5" rx="0.6" />
+    </svg>
+  )
+}
+
+function WifiIcon() {
+  return (
+    <svg width="16" height="12" viewBox="0 0 16 12" fill="none" aria-hidden="true">
+      <path d="M1 4.2C4.6 1.2 11.4 1.2 15 4.2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M3.3 6.6c2.4-1.8 6.9-1.8 9.4 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M5.7 8.9c1.3-1 3.3-1 4.6 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="8" cy="10.6" r="1" fill="currentColor" />
+    </svg>
+  )
+}
+
+function BatteryIcon() {
+  return (
+    <svg width="25" height="12" viewBox="0 0 25 12" fill="none" aria-hidden="true">
+      <rect x="0.6" y="0.6" width="21" height="10.8" rx="2.4" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="2" y="2" width="16" height="8" rx="1.2" fill="currentColor" />
+      <path d="M23 4.2v3.6c.8-.3 1.2-1 1.2-1.8s-.4-1.5-1.2-1.8Z" fill="currentColor" />
+    </svg>
+  )
+}
+
+function ChevronLeftIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" opacity="0.9">
+      <path d="M12.7274 3.63623L6.36377 9.99987L12.7274 16.3635" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function ChatIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true" opacity="0.48">
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        d="M15.3389 9.73291C17.7819 9.73292 19.7627 11.7137 19.7627 14.1567C19.7627 14.7471 19.6466 15.312 19.4355 15.8286C19.3369 16.0701 19.3206 16.279 19.3682 16.438L19.7363 17.6685C19.7973 17.8725 19.7503 18.0939 19.6113 18.2554C19.4723 18.4167 19.2606 18.4962 19.0498 18.4663L17.6152 18.2622C17.3255 18.221 17.0008 18.2769 16.6143 18.3931C16.2099 18.5146 15.7811 18.5796 15.3389 18.5796C12.896 18.5795 10.9162 16.5996 10.916 14.1567C10.9161 11.7138 12.8959 9.73305 15.3389 9.73291ZM9.64648 3.23877C12.2631 3.23877 14.5685 4.57167 15.9209 6.59229C16.1129 6.87916 16.0359 7.26751 15.749 7.45947C15.4622 7.65115 15.0747 7.57435 14.8828 7.2876C13.7525 5.59867 11.8287 4.48877 9.64648 4.48877C6.17012 4.48898 3.35171 7.30731 3.35156 10.7837C3.35156 11.6407 3.52303 12.4567 3.83203 13.1997C4.10282 13.8508 4.24665 14.6238 4.04297 15.3931L3.7002 16.687C3.67666 16.7759 3.75577 16.8592 3.8457 16.8403L5.69336 16.4478C6.17801 16.345 6.65409 16.4243 7.05176 16.5298C7.42167 16.6279 7.86466 16.7943 8.13477 16.8794C8.36996 16.9535 8.64238 17.0046 8.91895 17.0366C9.2617 17.0764 9.50737 17.3872 9.46777 17.73C9.42791 18.0725 9.118 18.3183 8.77539 18.2788C8.44672 18.2408 8.09151 18.1766 7.75879 18.0718C7.35921 17.9459 7.08354 17.8312 6.73145 17.7378C6.40702 17.6517 6.15539 17.6276 5.95312 17.6704L4.10449 18.063C3.10345 18.2749 2.23033 17.3569 2.49219 16.3677L2.83496 15.0728C2.94689 14.6497 2.88058 14.1669 2.67773 13.6792C2.30662 12.7868 2.10156 11.8083 2.10156 10.7837C2.10171 6.61695 5.47976 3.23898 9.64648 3.23877ZM15.3389 10.9829C13.5863 10.983 12.1661 12.4041 12.166 14.1567C12.1662 15.9093 13.5864 17.3295 15.3389 17.3296C15.6578 17.3296 15.965 17.2836 16.2539 17.1968C16.6921 17.0651 17.2281 16.9448 17.791 17.0249L18.2598 17.0913L18.1709 16.7964C18.0164 16.2799 18.1103 15.7671 18.2783 15.356C18.4291 14.9868 18.5127 14.5823 18.5127 14.1567C18.5127 12.4041 17.0915 10.9829 15.3389 10.9829Z"
+      />
+    </svg>
+  )
+}
+
+function PhoneIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" opacity="0.9">
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        d="M12 1.19287C12.7533 1.19287 13.3567 1.19222 13.8428 1.23193C14.3359 1.27225 14.7639 1.3573 15.1582 1.55811C15.7889 1.87949 16.3027 2.39227 16.624 3.02295C16.825 3.41739 16.9099 3.84601 16.9502 4.33936C16.9899 4.82537 16.9893 5.42804 16.9893 6.18115V13.8179C16.9893 14.571 16.9899 15.1736 16.9502 15.6597C16.9099 16.1529 16.8249 16.5817 16.624 16.9761C16.3026 17.6068 15.7889 18.1195 15.1582 18.4409C14.7639 18.6418 14.3359 18.7268 13.8428 18.7671C13.3567 18.8068 12.7533 18.8062 12 18.8062H8C7.24685 18.8062 6.64423 18.8068 6.1582 18.7671C5.66485 18.7268 5.23624 18.6419 4.8418 18.4409C4.21124 18.1195 3.6983 17.6067 3.37695 16.9761C3.17601 16.5817 3.0911 16.153 3.05078 15.6597C3.0111 15.1736 3.01172 14.571 3.01172 13.8179V6.18115C3.01172 5.42802 3.01108 4.82538 3.05078 4.33936C3.09109 3.84596 3.17598 3.41742 3.37695 3.02295C3.69832 2.39232 4.21117 1.87947 4.8418 1.55811C5.23628 1.35712 5.66479 1.27225 6.1582 1.23193C6.64423 1.19223 7.24685 1.19287 8 1.19287H12ZM8 2.44287C7.22624 2.44287 6.68311 2.44345 6.25977 2.47803C5.8438 2.51203 5.59805 2.57614 5.40918 2.67236C5.01398 2.87385 4.6927 3.19513 4.49121 3.59033C4.395 3.77919 4.33087 4.02498 4.29688 4.44092C4.2623 4.86425 4.26172 5.40742 4.26172 6.18115V13.8179C4.26172 14.5917 4.26229 15.1347 4.29688 15.5581C4.33088 15.9741 4.39497 16.2198 4.49121 16.4087C4.69274 16.804 5.01383 17.1261 5.40918 17.3276C5.59802 17.4238 5.84392 17.487 6.25977 17.521C6.6831 17.5556 7.22626 17.5562 8 17.5562H12C12.7739 17.5562 13.3178 17.5556 13.7412 17.521C14.1567 17.487 14.4021 17.4237 14.5908 17.3276C14.9863 17.1261 15.3082 16.8042 15.5098 16.4087C15.606 16.2198 15.6701 15.9741 15.7041 15.5581C15.7387 15.1347 15.7393 14.5917 15.7393 13.8179V6.18115C15.7393 5.40743 15.7387 4.86425 15.7041 4.44092C15.6701 4.02505 15.6059 3.77918 15.5098 3.59033C15.3082 3.19499 14.9862 2.87386 14.5908 2.67236C14.402 2.57619 14.1569 2.51203 13.7412 2.47803C13.3178 2.44343 12.774 2.44287 12 2.44287H8ZM11.8184 13.9204C12.1634 13.9206 12.4434 14.2004 12.4434 14.5454C12.4431 14.8903 12.1632 15.1702 11.8184 15.1704H8.18164C7.83679 15.1702 7.55688 14.8903 7.55664 14.5454C7.55664 14.2004 7.83665 13.9206 8.18164 13.9204H11.8184Z"
+      />
+    </svg>
+  )
+}
+
+function MonitorIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" opacity="0.48">
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        d="M12.4512 17.8975C12.7046 17.8975 12.9385 17.8979 13.125 17.8809C13.305 17.8644 13.5558 17.8242 13.7734 17.6592C14.0466 17.4519 14.216 17.1353 14.2354 16.793C14.2507 16.5205 14.1435 16.2904 14.0566 16.1318C13.9667 15.9676 13.8358 15.7736 13.6943 15.5635L13.4297 15.1699H13.8184C14.5716 15.1699 15.1741 15.1705 15.6602 15.1309C16.1535 15.0905 16.5821 15.0056 16.9766 14.8047C17.6071 14.4834 18.12 13.9703 18.4414 13.3398C18.6423 12.9455 18.7273 12.5166 18.7676 12.0234C18.8073 11.5374 18.8066 10.9338 18.8066 10.1807V7.08984C18.8066 6.33683 18.8073 5.73401 18.7676 5.24805C18.7272 4.75481 18.6423 4.32601 18.4414 3.93164C18.12 3.30118 17.6071 2.78808 16.9766 2.4668C16.5822 2.2659 16.1535 2.18093 15.6602 2.14062C15.1741 2.10094 14.5715 2.10156 13.8184 2.10156H6.18164C5.42844 2.10156 4.82589 2.10092 4.33984 2.14062C3.84649 2.18093 3.41788 2.26586 3.02344 2.4668C2.39293 2.78811 1.87997 3.30117 1.55859 3.93164C1.35765 4.32601 1.27275 4.75481 1.23242 5.24805C1.19272 5.734 1.19336 6.33684 1.19336 7.08984V10.1807C1.19336 10.9338 1.19274 11.5374 1.23242 12.0234C1.27273 12.5167 1.35774 12.9455 1.55859 13.3398C1.87995 13.9704 2.3929 14.4833 3.02344 14.8047C3.41792 15.0057 3.84643 15.0905 4.33984 15.1309C4.82589 15.1706 5.42843 15.1699 6.18164 15.1699H6.57129L6.30664 15.5635C6.16506 15.7738 6.03338 15.9675 5.94336 16.1318C5.85655 16.2904 5.7503 16.5205 5.76562 16.793C5.78503 17.1353 5.95346 17.4519 6.22656 17.6592C6.4442 17.8243 6.69493 17.8644 6.875 17.8809C7.06156 17.8979 7.29531 17.8975 7.54883 17.8975H12.4512ZM6.18164 13.9199C5.40781 13.9199 4.86477 13.9194 4.44141 13.8848C4.02543 13.8508 3.77969 13.7867 3.59082 13.6904C3.19552 13.4889 2.87431 13.1669 2.67285 12.7715C2.57678 12.5827 2.51249 12.3374 2.47852 11.9219C2.44396 11.4985 2.44336 10.9544 2.44336 10.1807V7.08984C2.44336 6.31625 2.44393 5.77289 2.47852 5.34961C2.51253 4.93389 2.57665 4.68783 2.67285 4.49902C2.87435 4.10399 3.19574 3.78248 3.59082 3.58105C3.77967 3.48487 4.02555 3.42071 4.44141 3.38672C4.86476 3.35213 5.40783 3.35156 6.18164 3.35156H13.8184C14.5923 3.35156 15.1352 3.35214 15.5586 3.38672C15.9746 3.42071 16.2203 3.48485 16.4092 3.58105C16.8045 3.78252 17.1266 4.10378 17.3281 4.49902C17.4243 4.68782 17.4875 4.93391 17.5215 5.34961C17.5561 5.77289 17.5566 6.31625 17.5566 7.08984V10.1807C17.5566 10.9544 17.556 11.4985 17.5215 11.9219C17.4875 12.3372 17.4241 12.5827 17.3281 12.7715C17.1266 13.167 16.8046 13.4889 16.4092 13.6904C16.2203 13.7867 15.9747 13.8508 15.5586 13.8848C15.1352 13.9193 14.5923 13.9199 13.8184 13.9199H6.18164ZM7.54883 16.6475C7.34606 16.6475 7.20316 16.6439 7.0957 16.6396C7.15213 16.5482 7.2299 16.4284 7.34277 16.2607L8.07715 15.1699H11.9229L12.6572 16.2607C12.7699 16.4281 12.8469 16.5483 12.9033 16.6396C12.796 16.6439 12.6532 16.6475 12.4512 16.6475H7.54883Z"
+      />
+    </svg>
+  )
+}
+
+function WrenchIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" opacity="0.48">
+      <path d="M17.9355 6.66283C17.9355 9.2027 15.8766 11.2617 13.3367 11.2617C12.9176 11.2617 12.5116 11.2056 12.1258 11.1006C11.976 11.0598 11.6861 10.9566 11.6861 10.9566L7.70437 16.2363C6.6753 17.6008 4.6773 17.7401 3.4688 16.5316C2.26046 15.3233 2.39958 13.3256 3.76373 12.2964L9.04293 8.31344C9.04293 8.31344 8.93968 8.02347 8.89892 7.87373C8.79389 7.48791 8.73782 7.08191 8.73782 6.66283C8.73782 4.12294 10.7968 2.06396 13.3367 2.06396C14.1134 2.06396 14.8451 2.25652 15.4868 2.59651L13.5283 4.55501C12.9992 5.08416 12.9992 5.94206 13.5283 6.4712C14.0574 7.00035 14.9154 7.00035 15.4445 6.4712L17.403 4.5127C17.743 5.15436 17.9355 5.88612 17.9355 6.66283Z" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function FullscreenIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M10.5596 16.2974L4.9149 16.2974C4.24546 16.2974 3.70278 15.7547 3.70278 15.0852L3.70278 9.44057" stroke="black" strokeOpacity="0.9" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9.44043 3.70264L15.0851 3.70264C15.7545 3.70264 16.2972 4.24532 16.2972 4.91476L16.2972 10.5594" stroke="black" strokeOpacity="0.9" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function PlusIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+      <path d="M9 3.6v10.8M3.6 9h10.8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function MicIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="6" y="1.6" width="4" height="7.2" rx="2" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M4 7.4a4 4 0 0 0 8 0M8 11.4V14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
+}

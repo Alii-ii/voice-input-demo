@@ -18,6 +18,7 @@ export default function SelectionEditor({
   onBackspace,
   onMove,
   onRestore,
+  onSend,
 }) {
   const onCollapseRef = useRef(onCollapse)
   const onInsertRef = useRef(onInsert)
@@ -133,7 +134,9 @@ export default function SelectionEditor({
                   className="flex h-8 w-8 items-center justify-center rounded-full border-0 bg-[#1c1c1e] p-0 text-white"
                   onPointerDown={(e) => {
                     e.preventDefault()
-                    onCollapse()
+                    e.stopPropagation()
+                    // 多选发送：把当前草稿发出去，而不是只收起键盘
+                    onSend?.()
                   }}
                 >
                   <ArrowUpIcon />

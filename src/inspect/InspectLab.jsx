@@ -1,21 +1,47 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import DeviceFrame from './DeviceFrame.jsx'
 import { startDictation } from './dictation.js'
 import ElementPicker from './ElementPicker.jsx'
 import SelectionEditor from './SelectionEditor.jsx'
 import SoloComposer from './SoloComposer.jsx'
 import StudyRoomPage from './StudyRoomPage.jsx'
-import { backspace, createDraft, insertTag, insertText, moveCursor } from './selectionDraft.js'
+import { backspace, createDraft, insertTag, insertText, moveCursor, plainCaret, plainText } from './selectionDraft.js'
 import { appendSoloSpeech, createSoloDraft, formatSoloMessage, replaceSoloTag } from './soloDraft.js'
+
+/** 发出后若没点停止，大约 5 秒回到空闲底栏 */
+const AGENT_RUN_MS = 5000
 
 /** 移动端点选编辑实验台：手机框里放预约页，右下角进入检查元素 */
 export default function InspectLab() {
   const phoneRef = useRef(null)
   const pageRef = useRef(null)
+  const fabSlotRef = useRef(null)
   const [regions, setRegions] = useState([])
   const [draft, setDraft] = useState(() => createDraft())
   const [editing, setEditing] = useState(false)
   const [soloDraft, setSoloDraft] = useState(null)
   const [lastSent, setLastSent] = useState('')
+  const [resetEpoch, setResetEpoch] = useState(0)
+  const [running, setRunning] = useState(false)
+  const runTimerRef = useRef(0)
+
+  useEffect(() => () => window.clearTimeout(runTimerRef.current), [])
+
+  // 有内容发出去之后，底栏进入进行中；再发一次会重新计时
+  const startRunning = () => {
+    window.clearTimeout(runTimerRef.current)
+    setRunning(true)
+    runTimerRef.current = window.setTimeout(() => {
+      runTimerRef.current = 0
+      setRunning(false)
+    }, AGENT_RUN_MS)
+  }
+
+  const stopRunning = () => {
+    window.clearTimeout(runTimerRef.current)
+    runTimerRef.current = 0
+    setRunning(false)
+  }
 
   // 事件回调里读最新值，避免塞进 setState 更新函数里做副作用
   const regionsRef = useRef(regions)
@@ -107,7 +133,26 @@ export default function InspectLab() {
     const message = formatSoloMessage(tag, cur?.speech || '')
     soloRef.current = null
     setSoloDraft(null)
-    if (message) setLastSent(message)
+    if (message) {
+      setLastSent(message)
+      startRunning()
+    }
+  }
+
+  // 多选发送：记下这条消息，选区、键盘和跟手都回到进入点选前；有内容才进入进行中
+  const onSend = () => {
+    const message = plainText(draftRef.current.segments).trim()
+    if (message) {
+      setLastSent(message)
+      startRunning()
+    }
+    const empty = createDraft()
+    regionsRef.current = []
+    draftRef.current = empty
+    setRegions([])
+    setDraft(empty)
+    setEditing(false)
+    setResetEpoch((n) => n + 1)
   }
 
   const onRestore = (next) => {
@@ -123,34 +168,49 @@ export default function InspectLab() {
     <div className="flex h-full min-h-0 items-center justify-center gap-10 px-5 py-4">
       <div
         ref={phoneRef}
-        className="relative h-[min(844px,100%)] w-[390px] max-w-full shrink-0 overflow-hidden rounded-[32px] bg-white shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
+        className="relative h-[min(844px,100%)] w-[390px] max-w-full shrink-0 overflow-hidden rounded-[40px] bg-[#e8e9eb] shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
       >
-        <div
-          ref={pageRef}
-          className="h-full overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        >
-          <StudyRoomPage />
+        <div className="h-full px-6 pb-[86px] pt-[112px]">
+          <div
+            ref={pageRef}
+            className="h-full overflow-y-auto overscroll-contain rounded-[28px] bg-white shadow-[0_8px_28px_rgba(0,0,0,0.08)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            <StudyRoomPage showStatusBar={false} />
+          </div>
         </div>
+        {/* 草稿在系统框单行输入里，点选按钮留在底栏，不再被另一条白条顶起 */}
         <ElementPicker
           phoneRef={phoneRef}
           pageRef={pageRef}
           regions={regions}
           onSelect={addSelection}
-          docked={regions.length > 0 && !editing}
           editing={editing}
           onDismiss={() => setEditing(false)}
           onSoloStart={onSoloStart}
           onSoloTarget={onSoloTarget}
           onSoloFinish={onSoloFinish}
+          resetEpoch={resetEpoch}
+          fabSlotRef={fabSlotRef}
+          docked={false}
+        />
+        <DeviceFrame
+          fabSlotRef={fabSlotRef}
+          text={plainText(draft.segments)}
+          caret={plainCaret(draft.segments, draft.cursor)}
+          running={running}
+          onActivate={() => {
+            if (regionsRef.current.length > 0) setEditing(true)
+          }}
+          onStop={stopRunning}
         />
         <p className="pointer-events-none sr-only" data-inspect-ui data-last-sent={lastSent}>
           {lastSent}
         </p>
         {soloDraft ? (
           <SoloComposer draft={soloDraft} />
-        ) : regions.length > 0 ? (
+        ) : editing ? (
           <SelectionEditor
-            expanded={editing}
+            expanded
             segments={draft.segments}
             cursor={draft.cursor}
             onActivate={() => setEditing(true)}
@@ -159,6 +219,7 @@ export default function InspectLab() {
             onBackspace={onBackspace}
             onMove={onMove}
             onRestore={onRestore}
+            onSend={onSend}
           />
         ) : null}
       </div>
@@ -169,7 +230,7 @@ export default function InspectLab() {
           轻点右下角按钮进入多选，再点元素即可累加序号。按住约 0.28 秒或拖动则进入单选：跟手听写，松手把当前元素和识别文字发出去，不改已有多选。
         </p>
         <p className="m-0 mt-2">
-          有选区后底部始终是一行输入框，光标处插入「选区N」。点这一行才升起键盘。Esc 或发送只收起键盘。键盘打开时点页面也只收起，不新增选区；点键盘和输入卡片不会收起。收起后可以继续点选。同一元素不重复添加，退格删掉标签会同步去掉高亮和序号。
+          有选区后，草稿显示在底部系统框那条单行输入里，内容是「选区N」和已输入文字。点这一行才升起键盘。Esc 或点页面只收起键盘。点发送会清掉选区并让底栏进入进行中，点暂停或数秒后回到按住说话。同一元素不重复添加，退格删掉标签会同步去掉高亮和序号。
         </p>
         <p className="m-0 mt-2">
           键盘态里发送旁边的麦克风与语音输入页相同：点一下进入，按住约 0.4 秒后松开即结束。识别文字插入当前光标。

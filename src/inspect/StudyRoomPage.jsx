@@ -22,8 +22,8 @@ const METRICS = [
   { key: 'light', value: '4000K', caption: '自然光感', icon: SunIcon, label: '光线' },
 ]
 
-/** 静域深度学习空间 · 移动端预约页 */
-export default function StudyRoomPage() {
+/** 静域深度学习空间 · 移动端预约页。外层系统框自带状态栏时关掉这一层，避免两个时钟叠在一起 */
+export default function StudyRoomPage({ showStatusBar = true }) {
   const [dateIndex, setDateIndex] = useState(0)
   const [slotId, setSlotId] = useState('09')
   const [booked, setBooked] = useState(false)
@@ -38,23 +38,28 @@ export default function StudyRoomPage() {
           className="block h-auto w-full"
         />
 
-        <header
-          aria-label="状态栏"
-          className="absolute inset-x-0 top-0 z-10 flex h-11 items-center justify-between px-5 text-[15px] font-semibold text-white"
-        >
-          <span>09:20</span>
-          <span className="flex items-center gap-1.5">
-            <SignalIcon />
-            <WifiIcon />
-            <span className="text-[12px] font-semibold tracking-wide">100</span>
-            <BatteryIcon />
-          </span>
-        </header>
+        {showStatusBar && (
+          <header
+            aria-label="状态栏"
+            className="absolute inset-x-0 top-0 z-10 flex h-11 items-center justify-between px-5 text-[15px] font-semibold text-white"
+          >
+            <span>09:20</span>
+            <span className="flex items-center gap-1.5">
+              <SignalIcon />
+              <WifiIcon />
+              <span className="text-[12px] font-semibold tracking-wide">100</span>
+              <BatteryIcon />
+            </span>
+          </header>
+        )}
 
         <button
           type="button"
           aria-label="返回"
-          className="absolute left-[11px] top-[52px] z-10 flex h-9 w-9 items-center justify-center rounded-full border-0 bg-[#81817f] text-white"
+          className={cn(
+            'absolute left-[11px] z-10 flex h-9 w-9 items-center justify-center rounded-full border-0 bg-[#81817f] text-white',
+            showStatusBar ? 'top-[52px]' : 'top-3',
+          )}
         >
           <BackIcon />
         </button>
