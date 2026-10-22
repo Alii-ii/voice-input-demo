@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '../lib/cn.js'
+import { INSPECT_GLASS_CLASS } from './glassChrome.js'
 import { describeElement, pickElement, readRadius } from './pickElement.js'
+import { FS_EDGE_NUDGE, FS_TWO_FINGER_MS } from './previewFullscreen.js'
 
 /** 与悬浮按钮同尺寸，未吸附时选框保持这个大小 */
 const BUTTON = 48
@@ -80,6 +82,7 @@ function releasedOnChrome(x, y) {
 /**
  * 悬浮按钮 + 点选遮罩。
  * 轻点悬浮按钮进入多选；移动超过阈值或按住约 280ms 进入单选跟手。
+ * 全屏时，两指都在手机框内按住 200ms 也进入多选，不走单选听写。
  * 多选确认后不退出：遮罩、已选高亮和序号都留着，可继续点下一个。
  * 输入卡片和键盘展开时，点页面只收起键盘，不确认新选区。
  */
@@ -96,6 +99,10 @@ export default function ElementPicker({
   editing,
   resetEpoch,
   fabSlotRef,
+  fullscreen = false,
+  edgeDock = false,
+  sideMotion = '150ms cubic-bezier(0, 0, 0.2, 1)',
+  onPickingChange,
 }) {
   const fabRef = useRef(null)
   const [active, setActive] = useState(false)
@@ -128,6 +135,18 @@ export default function ElementPicker({
   const regionsRef = useRef(regions)
   const editingRef = useRef(editing)
   const syncPinsRef = useRef(() => {})
+  const fullscreenRef = useRef(false)
+  const pickingRef = useRef(false)
+  const onPickingChangeRef = useRef(onPickingChange)
+  const fingersRef = useRef(new Map())
+  const twoTimerRef = useRef(0)
+  const twoGenRef = useRef(0)
+  const guardIdsRef = useRef(new Set())
+  const blockClickRef = useRef(false)
+  const blockClickTimerRef = useRef(0)
+  const enterRef = useRef(() => {})
+  fullscreenRef.current = fullscreen
+  onPickingChangeRef.current = onPickingChange
   onSelectRef.current = onSelect
   onDismissRef.current = onDismiss
   onSoloStartRef.current = onSoloStart
@@ -226,13 +245,23 @@ export default function ElementPicker({
     })
   }
 
+  // 多选或单选听写都算选中态，父级据此把全屏里藏起的输入框收回来
+  const notifyPicking = (next) => {
+    const on = !!next
+    if (pickingRef.current === on) return
+    pickingRef.current = on
+    onPickingChangeRef.current?.(on)
+  }
+
   const enter = (x, y) => {
     activeRef.current = true
     pointRef.current = { x, y }
     snappedRef.current = null
     setActive(true)
     setBox(freeBox(x, y))
+    notifyPicking(true)
   }
+  enterRef.current = enter
 
   const exit = () => {
     activeRef.current = false
@@ -242,6 +271,7 @@ export default function ElementPicker({
     pagePressRef.current = false
     setActive(false)
     setBox(null)
+    notifyPicking(soloRef.current)
   }
 
   // 多选点发送后父级递增 resetEpoch，退出跟手，遮罩随选区一起消失
@@ -258,6 +288,7 @@ export default function ElementPicker({
       soloRef.current = true
       lastSoloElRef.current = null
       setSolo(true)
+      notifyPicking(true)
       onSoloStartRef.current?.()
     }
     pointRef.current = { x, y }
@@ -275,6 +306,7 @@ export default function ElementPicker({
       activeRef.current = false
       setActive(false)
     }
+    notifyPicking(keepMulti && activeRef.current)
   }
 
   // 确认后留在点选里，父级负责把选区留在遮罩上并插入输入框
@@ -324,7 +356,95 @@ export default function ElementPicker({
       })
     }
 
+    const phoneHit = (x, y) => {
+      const phone = phoneRef.current?.getBoundingClientRect()
+      if (!phone) return false
+      return x >= phone.left && x <= phone.right && y >= phone.top && y <= phone.bottom
+    }
+
+    const eligibleCount = () => {
+      let n = 0
+      for (const finger of fingersRef.current.values()) {
+        if (finger.inside && !finger.onChrome) n += 1
+      }
+      return n
+    }
+
+    const clearTwoTimer = () => {
+      twoGenRef.current += 1
+      if (twoTimerRef.current) {
+        window.clearTimeout(twoTimerRef.current)
+        twoTimerRef.current = 0
+      }
+    }
+
+    // 恰好两指都在手机框内、且都不是系统按钮，按住满 200ms 才进入多选
+    const scheduleTwoFinger = () => {
+      if (!fullscreenRef.current || activeRef.current || soloRef.current || eligibleCount() !== 2) {
+        clearTwoTimer()
+        return
+      }
+      if (twoTimerRef.current) return
+      const gen = twoGenRef.current
+      twoTimerRef.current = window.setTimeout(() => {
+        twoTimerRef.current = 0
+        if (gen !== twoGenRef.current) return
+        if (!fullscreenRef.current || activeRef.current || soloRef.current) return
+        if (eligibleCount() !== 2) return
+        const ids = []
+        let point = null
+        for (const [id, finger] of fingersRef.current) {
+          if (!finger.inside || finger.onChrome) continue
+          ids.push(id)
+          if (!point) point = finger
+        }
+        if (ids.length !== 2 || !point) return
+        guardIdsRef.current = new Set(ids)
+        blockClickRef.current = true
+        window.clearTimeout(blockClickTimerRef.current)
+        enterRef.current(point.x, point.y)
+      }, FS_TWO_FINGER_MS)
+    }
+
+    const onFingerDown = (e) => {
+      if (e.button !== 0 || !fullscreenRef.current) return
+      if (!phoneHit(e.clientX, e.clientY)) return
+      const onChrome = e.target instanceof Element && !!e.target.closest('[data-inspect-chrome]')
+      fingersRef.current.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+        inside: true,
+        onChrome,
+      })
+      scheduleTwoFinger()
+    }
+
+    // 返回 true 表示这根手指属于已经触发的双指手势，松开时不要再点一次
+    const releaseFinger = (e) => {
+      const tracked = fingersRef.current.has(e.pointerId)
+      fingersRef.current.delete(e.pointerId)
+      const guarded = guardIdsRef.current.has(e.pointerId)
+      if (guarded) guardIdsRef.current.delete(e.pointerId)
+      if (!tracked && !guarded) return false
+      if (guarded && guardIdsRef.current.size === 0) {
+        window.clearTimeout(blockClickTimerRef.current)
+        blockClickTimerRef.current = window.setTimeout(() => {
+          blockClickRef.current = false
+        }, 80)
+      }
+      if (!guarded) scheduleTwoFinger()
+      return guarded
+    }
+
     const onMove = (e) => {
+      const finger = fingersRef.current.get(e.pointerId)
+      if (finger) {
+        finger.x = e.clientX
+        finger.y = e.clientY
+        finger.inside = phoneHit(e.clientX, e.clientY)
+        if (guardIdsRef.current.has(e.pointerId)) return
+        scheduleTwoFinger()
+      }
       const drag = dragRef.current
       if (drag && !drag.armed) {
         const dx = e.clientX - drag.x
@@ -350,6 +470,12 @@ export default function ElementPicker({
 
     // 松开时才确认多选。单选松手交给父级发送，不插入选区序号
     const onUp = (e) => {
+      const guarded = releaseFinger(e)
+      if (guarded) {
+        // 双指长按已经进入多选，这次松开不再确认元素，也不当成按钮点击
+        pagePressRef.current = false
+        return
+      }
       const drag = dragRef.current
       const pagePress = pagePressRef.current
       dragRef.current = null
@@ -401,17 +527,38 @@ export default function ElementPicker({
       schedule(point.x, point.y)
     }
 
+    const onCancel = (e) => {
+      releaseFinger(e)
+    }
+
+    const onClickCapture = (e) => {
+      if (!blockClickRef.current) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    window.addEventListener('pointerdown', onFingerDown, true)
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
     window.addEventListener('keydown', onKey)
+    window.addEventListener('click', onClickCapture, true)
     scroller?.addEventListener('scroll', onScroll, { passive: true })
     return () => {
+      window.removeEventListener('pointerdown', onFingerDown, true)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
       window.removeEventListener('keydown', onKey)
+      window.removeEventListener('click', onClickCapture, true)
       scroller?.removeEventListener('scroll', onScroll)
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       if (dragRef.current?.holdTimer) clearTimeout(dragRef.current.holdTimer)
+      clearTwoTimer()
+      window.clearTimeout(blockClickTimerRef.current)
+      fingersRef.current.clear()
+      guardIdsRef.current.clear()
+      blockClickRef.current = false
     }
   }, [pageRef])
 
@@ -450,18 +597,27 @@ export default function ElementPicker({
 
   // 键盘或一行选区输入挡住底栏时，按钮回到手机框里并抬高；平时停在底栏插槽
   const parked = Boolean(fabSlot) && !docked && !editing
+  // 全屏贴边时右侧圆角收成 0，图标往外挪 4px；选中态回到正圆
+  const flatEdge = edgeDock && parked
   const fabButton = (
     <button
       ref={fabRef}
       type="button"
       data-inspect-ui
       data-inspect-chrome
+      data-fs-edge={flatEdge ? '1' : '0'}
       aria-pressed={active || solo}
       aria-label={solo ? '松开并发送' : active ? '退出点选' : '进入点选'}
       title={solo ? '松开并发送' : active ? '退出点选' : '进入点选'}
-      style={parked ? { pointerEvents: 'auto' } : { pointerEvents: 'auto', bottom: docked ? 72 : 18 }}
+      style={{
+        pointerEvents: 'auto',
+        ...(parked ? null : { bottom: docked ? 72 : 18 }),
+        borderRadius: flatEdge ? '24px 0 0 24px' : '9999px',
+        transition: `bottom 150ms cubic-bezier(0.4,0,0.2,1), transform 150ms cubic-bezier(0.4,0,0.2,1), box-shadow 150ms cubic-bezier(0.4,0,0.2,1), color 150ms cubic-bezier(0.4,0,0.2,1), border-radius ${sideMotion}`,
+      }}
       className={cn(
-        'z-40 flex h-12 w-12 touch-none cursor-pointer items-center justify-center rounded-full border-0 bg-white text-black/90 shadow-[0_2px_10px_rgba(0,0,0,0.06)] transition-[bottom,transform,box-shadow,color] duration-150',
+        'z-40 flex h-12 w-12 touch-none cursor-pointer items-center justify-center text-black/90 shadow-[0_2px_10px_rgba(0,0,0,0.06)]',
+        INSPECT_GLASS_CLASS,
         parked ? 'relative' : 'absolute right-3.5',
         solo
           ? ''
@@ -496,14 +652,22 @@ export default function ElementPicker({
       }}
     >
       {/* 听写态只换文案，松手仍是原来的选定元素并发送 */}
-      {solo ? (
-        <span className="flex flex-col items-center justify-center whitespace-nowrap text-center text-[11px] leading-none text-[#8e8e93]">
-          <span>松开</span>
-          <span className="mt-px">发送</span>
-        </span>
-      ) : (
-        <InspectIcon />
-      )}
+      <span
+        className="inline-flex items-center justify-center"
+        style={{
+          transform: flatEdge ? `translateX(${FS_EDGE_NUDGE}px)` : 'none',
+          transition: `transform ${sideMotion}`,
+        }}
+      >
+        {solo ? (
+          <span className="flex flex-col items-center justify-center whitespace-nowrap text-center text-[11px] leading-none text-[#8e8e93]">
+            <span>松开</span>
+            <span className="mt-px">发送</span>
+          </span>
+        ) : (
+          <InspectIcon />
+        )}
+      </span>
     </button>
   )
 

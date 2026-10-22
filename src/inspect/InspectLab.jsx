@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import DeviceFrame from './DeviceFrame.jsx'
 import { startDictation } from './dictation.js'
 import ElementPicker from './ElementPicker.jsx'
+import { expandDuration, sideDuration, usePreviewFullscreen } from './previewFullscreen.js'
 import SelectionEditor from './SelectionEditor.jsx'
 import StudyRoomPage from './StudyRoomPage.jsx'
 import { backspace, createDraft, insertTag, insertText, moveCursor, plainCaret, plainText } from './selectionDraft.js'
@@ -22,7 +23,17 @@ export default function InspectLab() {
   const [lastSent, setLastSent] = useState('')
   const [resetEpoch, setResetEpoch] = useState(0)
   const [running, setRunning] = useState(false)
+  const [picking, setPicking] = useState(false)
   const runTimerRef = useRef(0)
+  const { phase, entering, fullscreen, toggle, syncInput } = usePreviewFullscreen()
+  // 全屏输入框只跟正在点选走：多选（picking）或单选听写（soloDraft）。
+  // 退出点选后即使选区还在，以及 running 为真，都不 syncInput(true)。
+  // 非全屏 phase 是 off，syncInput 不会改显示，底栏输入框始终在。
+  const showBar = picking || !!soloDraft
+
+  useEffect(() => {
+    syncInput(showBar)
+  }, [showBar, syncInput])
 
   useEffect(() => () => window.clearTimeout(runTimerRef.current), [])
 
@@ -167,12 +178,27 @@ export default function InspectLab() {
     <div className="flex h-full min-h-0 items-center justify-center gap-10 px-5 py-4">
       <div
         ref={phoneRef}
+        data-fs-phase={phase}
+        data-fs-entering={entering ? '1' : '0'}
         className="relative h-[min(844px,100%)] w-[390px] max-w-full shrink-0 overflow-hidden rounded-[40px] bg-[#e8e9eb] shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
       >
-        <div className="h-full px-6 pb-[86px] pt-[112px]">
+        <div
+          className="h-full"
+          style={{
+            paddingTop: fullscreen ? 0 : 112,
+            paddingRight: fullscreen ? 0 : 24,
+            paddingBottom: fullscreen ? 0 : 86,
+            paddingLeft: fullscreen ? 0 : 24,
+            transition: `padding ${expandDuration(entering)}`,
+          }}
+        >
           <div
             ref={pageRef}
-            className="h-full overflow-y-auto overscroll-contain rounded-[28px] bg-white shadow-[0_8px_28px_rgba(0,0,0,0.08)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="h-full overflow-y-auto overscroll-contain bg-white shadow-[0_8px_28px_rgba(0,0,0,0.08)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            style={{
+              borderRadius: fullscreen ? 0 : 28,
+              transition: `border-radius ${expandDuration(entering)}`,
+            }}
           >
             <StudyRoomPage showStatusBar={false} />
           </div>
@@ -191,6 +217,10 @@ export default function InspectLab() {
           resetEpoch={resetEpoch}
           fabSlotRef={fabSlotRef}
           docked={false}
+          fullscreen={fullscreen}
+          edgeDock={phase === 'dock'}
+          sideMotion={sideDuration(phase)}
+          onPickingChange={setPicking}
         />
         <DeviceFrame
           fabSlotRef={fabSlotRef}
@@ -202,6 +232,9 @@ export default function InspectLab() {
           }}
           onStop={stopRunning}
           onInsert={onInsert}
+          fsPhase={phase}
+          fsEntering={entering}
+          onToggleFullscreen={toggle}
           solo={
             soloDraft
               ? {
@@ -236,6 +269,9 @@ export default function InspectLab() {
         <p className="m-0 mb-2 text-[15px] font-medium text-white">点选编辑</p>
         <p className="m-0">
           轻点右下角按钮进入多选，再点元素即可累加序号。按住约 0.28 秒或拖动则进入单选：跟手听写，松手把当前元素和识别文字发出去，不改已有多选。
+        </p>
+        <p className="m-0 mt-2">
+          点左下角进入全屏：顶栏和输入框先收起，预览铺满，两侧按钮再贴边。全屏时两指按在页面上约 0.2 秒进入多选，输入框会回来；退出点选后再次收起，已有选区或执行中也不会留着。再点左侧按钮回到原来的布局。
         </p>
         <p className="m-0 mt-2">
           有选区后，草稿显示在底部系统框那条单行输入里，内容是「选区N」和已输入文字。点这一行才升起键盘。Esc 或点页面只收起键盘。点发送会清掉选区并让底栏进入进行中，点暂停或数秒后回到按住说话。同一元素不重复添加，退格删掉标签会同步去掉高亮和序号。

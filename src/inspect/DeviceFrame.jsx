@@ -2,12 +2,22 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import AgentPhrase from './AgentPhrase.jsx'
 import { SoloScrollLine, SoloWave } from './SoloComposer.jsx'
+import { INSPECT_GLASS_CLASS } from './glassChrome.js'
+import {
+  FS_EDGE_NUDGE,
+  FS_INPUT_INSET,
+  FS_SIDE_INSET,
+  expandDuration,
+  inputDuration,
+  sideDuration,
+} from './previewFullscreen.js'
 
 /**
  * 预览页外层的系统框：状态栏、顶部模式切换、底部全屏和一行输入。
  * 点选按钮由 ElementPicker 挂进 fabSlotRef。
  * 键盘没收起时，多选草稿写在底部这枚单行 textarea 里。
  * 点选遮罩盖住整框，含状态栏和按钮之间的空隙；只有上下系统按钮浮在遮罩上。
+ * 全屏分两段：先收起顶栏和输入框，再把两侧按钮贴边；选中态把输入框收回来。
  */
 
 /** 按纯文本宽度把光标滚进 textarea 的可视区，高度仍锁在一行 */
@@ -40,11 +50,21 @@ export default function DeviceFrame({
   onStop,
   onInsert,
   solo = null,
+  fsPhase = 'off',
+  fsEntering = false,
+  onToggleFullscreen,
 }) {
   const inputRef = useRef(null)
   const onInsertRef = useRef(onInsert)
   onInsertRef.current = onInsert
   const dictating = !!solo
+  const fullscreen = fsPhase !== 'off'
+  // 贴边只在全屏空闲；选中态和普通布局都把圆钮留在能夹住输入框的位置
+  const edge = fsPhase === 'dock'
+  const showInput = !fullscreen || fsPhase === 'pick'
+  const topMotion = expandDuration(fsEntering)
+  const sideMotion = sideDuration(fsPhase)
+  const inputMotion = inputDuration(fsPhase, fsEntering)
 
   // 直接听原生 compositionend。组词过程不改草稿，上屏整段再插入
   useEffect(() => {
@@ -72,7 +92,13 @@ export default function DeviceFrame({
     <div className="pointer-events-none absolute inset-0" data-inspect-ui>
       <header
         aria-label="状态栏"
+        aria-hidden={fullscreen ? 'true' : undefined}
         className="absolute inset-x-0 top-0 flex h-[52px] items-center justify-between px-[22px] text-[15px] font-semibold tracking-[-0.02em] text-[#111113]"
+        style={{
+          opacity: fullscreen ? 0 : 1,
+          transform: fullscreen ? 'translateY(-12px)' : 'none',
+          transition: `opacity ${topMotion}, transform ${topMotion}`,
+        }}
       >
         <span>9:41</span>
         <span className="flex items-center gap-[5px]">
@@ -82,12 +108,23 @@ export default function DeviceFrame({
         </span>
       </header>
 
-      {/* 五个独立白控件，浮在点选遮罩之上；间隙不挡遮罩 */}
-      <div className="pointer-events-none absolute inset-x-0 top-[50px] z-30 flex items-center justify-center gap-3 px-4">
-        <CircleButton label="返回">
+      {/* 五个独立玻璃控件，浮在点选遮罩之上；间隙不挡遮罩 */}
+      <div
+        aria-hidden={fullscreen ? 'true' : undefined}
+        className={
+          'pointer-events-none absolute inset-x-0 top-[50px] z-30 flex items-center justify-center gap-3 px-4' +
+          (fullscreen ? ' [&_button]:!pointer-events-none' : '')
+        }
+        style={{
+          opacity: fullscreen ? 0 : 1,
+          transform: fullscreen ? 'translateY(-12px)' : 'none',
+          transition: `opacity ${topMotion}, transform ${topMotion}`,
+        }}
+      >
+        <CircleButton label="返回" locked={fullscreen}>
           <ChevronLeftIcon />
         </CircleButton>
-        <CircleButton label="对话">
+        <CircleButton label="对话" locked={fullscreen}>
           <ChatIcon />
         </CircleButton>
         <button
@@ -95,39 +132,82 @@ export default function DeviceFrame({
           aria-pressed="true"
           data-inspect-ui
           data-inspect-chrome
-          className="flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-full border-0 bg-white px-4 text-[15px] font-medium tracking-[-0.01em] text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)]"
-          style={{ pointerEvents: 'auto' }}
+          className={`flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-full px-4 text-[15px] font-medium tracking-[-0.01em] text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS}`}
+          style={{ pointerEvents: fullscreen ? 'none' : 'auto' }}
         >
           <PhoneIcon />
           Preview
         </button>
-        <CircleButton label="桌面预览">
+        <CircleButton label="桌面预览" locked={fullscreen}>
           <MonitorIcon />
         </CircleButton>
-        <CircleButton label="工具">
+        <CircleButton label="工具" locked={fullscreen}>
           <WrenchIcon />
         </CircleButton>
       </div>
 
       {/* 底栏按钮同样浮在遮罩上，整条灰底不再挡住遮罩 */}
       {/* 胶囊下方始终留出语音轴高度，听写开关时输入框不跳动；非听写只留空 */}
+      {/* 按钮绝对定位，输入框显隐时垂直位置不跳 */}
       <div
-        className="pointer-events-none absolute inset-x-0 bottom-[6px] z-30 flex items-start gap-2.5 px-4"
+        className="pointer-events-none absolute inset-x-0 bottom-[6px] z-30"
+        style={{ height: 70 }}
         data-solo={dictating ? 'true' : undefined}
       >
-        <CircleButton label="全屏">
-          <FullscreenIcon />
-        </CircleButton>
+        <button
+          type="button"
+          aria-label={fullscreen ? '退出全屏' : '全屏'}
+          aria-pressed={fullscreen}
+          data-inspect-ui
+          data-inspect-chrome
+          data-fs-edge={edge ? '1' : '0'}
+          onClick={onToggleFullscreen}
+          style={{
+            pointerEvents: 'auto',
+            left: edge ? 0 : FS_SIDE_INSET,
+            borderRadius: edge ? '0 24px 24px 0' : '24px',
+            transition: `left ${sideMotion}, border-radius ${sideMotion}`,
+          }}
+          className={`absolute top-0 flex h-12 w-12 items-center justify-center p-0 text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS}`}
+        >
+          <span
+            className="inline-flex"
+            style={{
+              transform: edge ? `translateX(-${FS_EDGE_NUDGE}px)` : 'none',
+              transition: `transform ${sideMotion}`,
+            }}
+          >
+            <span
+              key={fullscreen ? 'exit' : 'enter'}
+              className={fullscreen ? 'inspect-fs-icon-enter inline-flex' : 'inspect-fs-icon-exit inline-flex'}
+            >
+              {fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
+            </span>
+          </span>
+        </button>
 
-        <div className="min-w-0 flex-1">
+        <div
+          data-fs-input={showInput ? '1' : '0'}
+          className={
+            'absolute top-0' + (showInput ? '' : ' [&_*]:!pointer-events-none')
+          }
+          style={{
+            left: FS_INPUT_INSET,
+            right: FS_INPUT_INSET,
+            opacity: showInput ? 1 : 0,
+            transform: showInput ? 'none' : 'translateY(12px)',
+            pointerEvents: 'none',
+            transition: `opacity ${inputMotion}, transform ${inputMotion}`,
+          }}
+        >
           <div
             className={
-              'flex h-12 min-w-0 items-center rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)] ' +
+              `flex h-12 min-w-0 items-center rounded-full shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS} ` +
               (dictating ? 'px-4' : 'pl-3 pr-1.5')
             }
             data-inspect-ui
             data-inspect-chrome
-            style={{ pointerEvents: 'auto' }}
+            style={{ pointerEvents: showInput ? 'auto' : 'none' }}
           >
             {dictating ? null : (
               <button
@@ -214,24 +294,33 @@ export default function DeviceFrame({
         </div>
 
         {/* 点选按钮挂在这里，和全屏、输入框同一行 */}
-        <div ref={fabSlotRef} className="h-12 w-12 shrink-0" />
+        <div
+          ref={fabSlotRef}
+          data-fs-edge={edge ? '1' : '0'}
+          className="absolute top-0 h-12 w-12"
+          style={{
+            right: edge ? 0 : FS_SIDE_INSET,
+            transition: `right ${sideMotion}`,
+          }}
+        />
       </div>
     </div>
   )
 }
 
-function CircleButton({ label, children, bare = false }) {
+function CircleButton({ label, children, bare = false, locked = false }) {
   return (
     <button
       type="button"
       aria-label={label}
       data-inspect-ui
       data-inspect-chrome
-      style={{ pointerEvents: 'auto' }}
+      tabIndex={locked ? -1 : undefined}
+      style={{ pointerEvents: locked ? 'none' : 'auto' }}
       className={
         bare
           ? 'flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-[#1c1c1e]'
-          : 'flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-0 bg-white p-0 text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)]'
+          : `flex h-12 w-12 shrink-0 items-center justify-center rounded-full p-0 text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS}`
       }
     >
       {children}
@@ -319,6 +408,15 @@ function WrenchIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" opacity="0.48">
       <path d="M17.9355 6.66283C17.9355 9.2027 15.8766 11.2617 13.3367 11.2617C12.9176 11.2617 12.5116 11.2056 12.1258 11.1006C11.976 11.0598 11.6861 10.9566 11.6861 10.9566L7.70437 16.2363C6.6753 17.6008 4.6773 17.7401 3.4688 16.5316C2.26046 15.3233 2.39958 13.3256 3.76373 12.2964L9.04293 8.31344C9.04293 8.31344 8.93968 8.02347 8.89892 7.87373C8.79389 7.48791 8.73782 7.08191 8.73782 6.66283C8.73782 4.12294 10.7968 2.06396 13.3367 2.06396C14.1134 2.06396 14.8451 2.25652 15.4868 2.59651L13.5283 4.55501C12.9992 5.08416 12.9992 5.94206 13.5283 6.4712C14.0574 7.00035 14.9154 7.00035 15.4445 6.4712L17.403 4.5127C17.743 5.15436 17.9355 5.88612 17.9355 6.66283Z" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function ExitFullscreenIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M9.44043 3.70264V8.22831C9.44043 8.89775 8.89775 9.44043 8.22831 9.44043H3.70264" stroke="black" strokeOpacity="0.9" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10.5596 16.2974V11.7717C10.5596 11.1023 11.1023 10.5596 11.7717 10.5596H16.2974" stroke="black" strokeOpacity="0.9" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
