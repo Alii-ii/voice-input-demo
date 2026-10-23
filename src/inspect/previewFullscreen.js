@@ -9,7 +9,7 @@ export const FS_DOCK_MS = 150
 export const FS_EXIT_MS = 200
 export const FS_EASE_OUT = 'cubic-bezier(0, 0, 0.2, 1)'
 
-/** 全屏里两指按住这么久，等同轻点右侧按钮进入多选 */
+/** 两指按住这么久进入多选，全屏和非全屏同一档 */
 export const FS_TWO_FINGER_MS = 200
 
 /** 底栏圆钮现在的左边距（px-4）；贴边后再把图标往外侧挪 4px */

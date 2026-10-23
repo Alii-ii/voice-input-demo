@@ -40,7 +40,7 @@ export function SoloScrollLine({ prefix = '', label = '', summary = '', speech =
   )
 }
 
-/** 贴在输入胶囊正下方的矮波形，不占原来那一整条语音轴 */
+/** 贴着胶囊底边的波形：条形从同一条底边向上长，横向铺满胶囊并左对齐 */
 export function SoloWave() {
   const [heights, setHeights] = useState(() =>
     Array.from({ length: BARS }, () => 0.15 + Math.random() * 0.2),
@@ -70,12 +70,13 @@ export function SoloWave() {
   return (
     <div
       aria-hidden="true"
-      className="flex h-[18px] w-full items-center justify-between overflow-hidden [mask-image:linear-gradient(to_right,transparent,#000_12%,#000_88%,transparent)] [-webkit-mask-image:linear-gradient(to_right,transparent,#000_12%,#000_88%,transparent)]"
+      data-solo-wave
+      className="flex h-[18px] w-full items-end justify-between overflow-hidden"
     >
       {heights.map((h, i) => (
         <span
           key={i}
-          className="w-[2px] shrink-0 rounded-full bg-[#1c1c1e] transition-[height] duration-100 ease-linear"
+          className="w-[2px] shrink-0 self-end rounded-full bg-[#1c1c1e] transition-[height] duration-100 ease-linear"
           style={{ height: `${Math.max(2, Math.round(h * 18))}px` }}
         />
       ))}

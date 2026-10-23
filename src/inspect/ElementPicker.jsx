@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '../lib/cn.js'
+import { createBarHold, markBarHold } from './barHold.js'
 import { INSPECT_GLASS_CLASS } from './glassChrome.js'
 import { describeElement, pickElement, readRadius } from './pickElement.js'
 import { FS_EDGE_NUDGE, FS_TWO_FINGER_MS } from './previewFullscreen.js'
+import { pointOnInspectChrome, resolveTwoFingerPoint } from './twoFingerPick.js'
 
 /** 与悬浮按钮同尺寸，未吸附时选框保持这个大小 */
 const BUTTON = 48
@@ -82,7 +84,8 @@ function releasedOnChrome(x, y) {
 /**
  * 悬浮按钮 + 点选遮罩。
  * 轻点悬浮按钮进入多选；移动超过阈值或按住约 280ms 进入单选跟手。
- * 全屏时，两指都在手机框内按住 200ms 也进入多选，不走单选听写。
+ * 两指都在手机框内，连线中点落在页面上按住 200ms 也进入多选，全屏与否都一样。
+ * 底部输入框按住同样约 280ms：滑进页面走单选，没选中元素则只听写。
  * 多选确认后不退出：遮罩、已选高亮和序号都留着，可继续点下一个。
  * 输入卡片和键盘展开时，点页面只收起键盘，不确认新选区。
  */
@@ -99,7 +102,7 @@ export default function ElementPicker({
   editing,
   resetEpoch,
   fabSlotRef,
-  fullscreen = false,
+  running = false,
   edgeDock = false,
   sideMotion = '150ms cubic-bezier(0, 0, 0.2, 1)',
   onPickingChange,
@@ -135,7 +138,7 @@ export default function ElementPicker({
   const regionsRef = useRef(regions)
   const editingRef = useRef(editing)
   const syncPinsRef = useRef(() => {})
-  const fullscreenRef = useRef(false)
+  const runningRef = useRef(false)
   const pickingRef = useRef(false)
   const onPickingChangeRef = useRef(onPickingChange)
   const fingersRef = useRef(new Map())
@@ -145,7 +148,7 @@ export default function ElementPicker({
   const blockClickRef = useRef(false)
   const blockClickTimerRef = useRef(0)
   const enterRef = useRef(() => {})
-  fullscreenRef.current = fullscreen
+  runningRef.current = running
   onPickingChangeRef.current = onPickingChange
   onSelectRef.current = onSelect
   onDismissRef.current = onDismiss
@@ -207,7 +210,8 @@ export default function ElementPicker({
     }
 
     let next
-    if (insideFab(x, y)) {
+    // 系统按钮（含底部输入框）不透传命中，避免把按钮底下的页面元素当成选中
+    if (insideFab(x, y) || pointOnInspectChrome(x, y)) {
       snappedRef.current = null
       next = freeBox(x, y)
       if (soloRef.current && lastSoloElRef.current) {
@@ -362,13 +366,18 @@ export default function ElementPicker({
       return x >= phone.left && x <= phone.right && y >= phone.top && y <= phone.bottom
     }
 
-    const eligibleCount = () => {
-      let n = 0
-      for (const finger of fingersRef.current.values()) {
-        if (finger.inside && !finger.onChrome) n += 1
-      }
-      return n
+    const pageHit = (x, y) => {
+      const page = pageRef.current?.getBoundingClientRect()
+      if (!page) return false
+      return x >= page.left && x <= page.right && y >= page.top && y <= page.bottom
     }
+
+    const twoFingerPoint = () =>
+      resolveTwoFingerPoint([...fingersRef.current.values()], {
+        inPhone: phoneHit,
+        inPage: pageHit,
+        onChrome: pointOnInspectChrome,
+      })
 
     const clearTwoTimer = () => {
       twoGenRef.current += 1
@@ -378,9 +387,33 @@ export default function ElementPicker({
       }
     }
 
-    // 恰好两指都在手机框内、且都不是系统按钮，按住满 200ms 才进入多选
+    const canBarHold = () =>
+      !runningRef.current && !editingRef.current && !activeRef.current && !soloRef.current
+
+    // 输入框长按跟右侧按钮同一档。成立后走单选听写；没滑到元素就只有语音
+    const barHold = createBarHold({
+      holdMs: PRESS_HOLD,
+      allowed: canBarHold,
+      onArm: (pointerId, x, y) => {
+        const el = markBarHold(true)
+        blockClickRef.current = true
+        if (el) {
+          el.blur()
+          try {
+            el.setPointerCapture(pointerId)
+          } catch {
+            /* 个别环境不支持 capture，松手仍由 window pointerup 接管 */
+          }
+        }
+        beginSolo(x, y)
+      },
+    })
+
+    // 恰好两指都在手机框内，中点落在页面且不是系统按钮，按住满 200ms 才进入多选
     const scheduleTwoFinger = () => {
-      if (!fullscreenRef.current || activeRef.current || soloRef.current || eligibleCount() !== 2) {
+      const point = twoFingerPoint()
+      // 提前松手、变成一指、中点离开页面或压到系统按钮，都取消这 200ms
+      if (activeRef.current || soloRef.current || !point) {
         clearTwoTimer()
         return
       }
@@ -389,34 +422,35 @@ export default function ElementPicker({
       twoTimerRef.current = window.setTimeout(() => {
         twoTimerRef.current = 0
         if (gen !== twoGenRef.current) return
-        if (!fullscreenRef.current || activeRef.current || soloRef.current) return
-        if (eligibleCount() !== 2) return
-        const ids = []
-        let point = null
-        for (const [id, finger] of fingersRef.current) {
-          if (!finger.inside || finger.onChrome) continue
-          ids.push(id)
-          if (!point) point = finger
-        }
-        if (ids.length !== 2 || !point) return
+        if (activeRef.current || soloRef.current) return
+        const next = twoFingerPoint()
+        const ids = [...fingersRef.current.keys()]
+        if (!next || ids.length !== 2) return
         guardIdsRef.current = new Set(ids)
         blockClickRef.current = true
         window.clearTimeout(blockClickTimerRef.current)
-        enterRef.current(point.x, point.y)
+        // 这两根手指不再走按钮长按，也不再从输入框另开听写
+        if (dragRef.current?.holdTimer) clearTimeout(dragRef.current.holdTimer)
+        dragRef.current = null
+        barHold.cancel()
+        // 先标上，这两根手指的 pointerup 不要再被输入框当成短按
+        markBarHold(true)
+        enterRef.current(next.x, next.y)
       }, FS_TWO_FINGER_MS)
     }
 
     const onFingerDown = (e) => {
-      if (e.button !== 0 || !fullscreenRef.current) return
+      if (e.button !== 0) return
       if (!phoneHit(e.clientX, e.clientY)) return
-      const onChrome = e.target instanceof Element && !!e.target.closest('[data-inspect-chrome]')
       fingersRef.current.set(e.pointerId, {
         x: e.clientX,
         y: e.clientY,
-        inside: true,
-        onChrome,
       })
       scheduleTwoFinger()
+      // 不 preventDefault，短按仍能聚焦输入框、继续拼音
+      if (e.target instanceof Element && e.target.closest('[data-inspect-ime="bar"]')) {
+        barHold.down(e.pointerId, e.clientX, e.clientY)
+      }
     }
 
     // 返回 true 表示这根手指属于已经触发的双指手势，松开时不要再点一次
@@ -441,7 +475,8 @@ export default function ElementPicker({
       if (finger) {
         finger.x = e.clientX
         finger.y = e.clientY
-        finger.inside = phoneHit(e.clientX, e.clientY)
+        // 还没成立时中点跟着走，离开页面或按钮就取消这 200ms
+        barHold.move(e.pointerId, e.clientX, e.clientY)
         if (guardIdsRef.current.has(e.pointerId)) return
         scheduleTwoFinger()
       }
@@ -471,10 +506,21 @@ export default function ElementPicker({
     // 松开时才确认多选。单选松手交给父级发送，不插入选区序号
     const onUp = (e) => {
       const guarded = releaseFinger(e)
+      const barResult = barHold.up(e.pointerId)
+      if (barResult !== 'none') markBarHold(false)
       if (guarded) {
         // 双指长按已经进入多选，这次松开不再确认元素，也不当成按钮点击
         pagePressRef.current = false
+        // 最后一根手指的 pointerup 已经过了输入框，这时再清掉短按抑制
+        if (guardIdsRef.current.size === 0) markBarHold(false)
         return
+      }
+      if (barResult === 'armed') {
+        // 点击发生在 pointerup 之后，挡住它，避免听写输入框被再次聚焦
+        window.clearTimeout(blockClickTimerRef.current)
+        blockClickTimerRef.current = window.setTimeout(() => {
+          blockClickRef.current = false
+        }, 80)
       }
       const drag = dragRef.current
       const pagePress = pagePressRef.current
@@ -529,6 +575,7 @@ export default function ElementPicker({
 
     const onCancel = (e) => {
       releaseFinger(e)
+      if (barHold.up(e.pointerId) !== 'none') markBarHold(false)
     }
 
     const onClickCapture = (e) => {
@@ -555,6 +602,8 @@ export default function ElementPicker({
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       if (dragRef.current?.holdTimer) clearTimeout(dragRef.current.holdTimer)
       clearTwoTimer()
+      barHold.cancel()
+      markBarHold(false)
       window.clearTimeout(blockClickTimerRef.current)
       fingersRef.current.clear()
       guardIdsRef.current.clear()

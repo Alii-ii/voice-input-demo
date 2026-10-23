@@ -217,7 +217,7 @@ export default function InspectLab() {
           resetEpoch={resetEpoch}
           fabSlotRef={fabSlotRef}
           docked={false}
-          fullscreen={fullscreen}
+          running={running}
           edgeDock={phase === 'dock'}
           sideMotion={sideDuration(phase)}
           onPickingChange={setPicking}
@@ -235,6 +235,7 @@ export default function InspectLab() {
           fsPhase={phase}
           fsEntering={entering}
           onToggleFullscreen={toggle}
+          barHoldEnabled={!running && !editing && !picking && !soloDraft}
           solo={
             soloDraft
               ? {
@@ -271,7 +272,7 @@ export default function InspectLab() {
           轻点右下角按钮进入多选，再点元素即可累加序号。按住约 0.28 秒或拖动则进入单选：跟手听写，松手把当前元素和识别文字发出去，不改已有多选。
         </p>
         <p className="m-0 mt-2">
-          点左下角进入全屏：顶栏和输入框先收起，预览铺满，两侧按钮再贴边。全屏时两指按在页面上约 0.2 秒进入多选，输入框会回来；退出点选后再次收起，已有选区或执行中也不会留着。再点左侧按钮回到原来的布局。
+          点左下角进入全屏：顶栏和输入框先收起，预览铺满，两侧按钮再贴边。两指按在手机框里、连线中点落在页面上约 0.2 秒进入多选，全屏和非全屏都一样，输入框会回来；退出点选后再次收起，已有选区或执行中也不会留着。底部输入框按住约 0.28 秒也可以听写，滑进页面会带上元素，没选中就只发语音。再点左侧按钮回到原来的布局。
         </p>
         <p className="m-0 mt-2">
           有选区后，草稿显示在底部系统框那条单行输入里，内容是「选区N」和已输入文字。点这一行才升起键盘。Esc 或点页面只收起键盘。点发送会清掉选区并让底栏进入进行中，点暂停或数秒后回到按住说话。同一元素不重复添加，退格删掉标签会同步去掉高亮和序号。

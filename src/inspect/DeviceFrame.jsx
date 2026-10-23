@@ -53,6 +53,7 @@ export default function DeviceFrame({
   fsPhase = 'off',
   fsEntering = false,
   onToggleFullscreen,
+  barHoldEnabled = false,
 }) {
   const inputRef = useRef(null)
   const onInsertRef = useRef(onInsert)
@@ -189,7 +190,7 @@ export default function DeviceFrame({
         <div
           data-fs-input={showInput ? '1' : '0'}
           className={
-            'absolute top-0' + (showInput ? '' : ' [&_*]:!pointer-events-none')
+            'absolute top-0' + (showInput || !running ? '' : ' [&_*]:!pointer-events-none')
           }
           style={{
             left: FS_INPUT_INSET,
@@ -207,7 +208,7 @@ export default function DeviceFrame({
             }
             data-inspect-ui
             data-inspect-chrome
-            style={{ pointerEvents: showInput ? 'auto' : 'none' }}
+            style={{ pointerEvents: showInput || !running ? 'auto' : 'none' }}
           >
             {dictating ? null : (
               <button
@@ -245,8 +246,21 @@ export default function DeviceFrame({
                     e.preventDefault()
                     return
                   }
-                  // 不阻止默认聚焦，桌面拼音才能在这条单行框里组词
+                  // 全屏把输入框藏起来时，短按不抢焦点；长按仍由外层计时
+                  if (!showInput) {
+                    e.preventDefault()
+                    return
+                  }
+                  // 长按听写还没成立前不 preventDefault，桌面拼音才能组词
                   if (running || !text) return
+                  if (barHoldEnabled) return
+                  onActivate?.()
+                }}
+                onPointerUp={(e) => {
+                  if (e.button !== 0) return
+                  // 短按：有草稿才打开键盘。长按已经成立、或空框，都不从这里进听写
+                  if (!showInput || !barHoldEnabled || running || dictating || !text) return
+                  if (e.currentTarget.dataset.inspectHold === 'armed') return
                   onActivate?.()
                 }}
               />
@@ -288,7 +302,7 @@ export default function DeviceFrame({
             )}
           </div>
           {/* 和听写波形同一块高度；没在听写时不画条，避免底栏被顶上去 */}
-          <div className="pointer-events-none mt-1 h-[18px] px-1">
+          <div className="pointer-events-none mt-1 flex h-[18px] w-full items-end">
             {dictating ? <SoloWave /> : null}
           </div>
         </div>
