@@ -62,7 +62,6 @@ export default function DeviceFrame({
   selectMode = null,
   onExitSelect,
   armedN = null,
-  onTagPress,
 }) {
   const inputRef = useRef(null)
   const rowRef = useRef(null)
@@ -436,6 +435,7 @@ export default function DeviceFrame({
               {running && !dictating ? <AgentPhrase /> : null}
               {rich ? (
                 <div className="pointer-events-none absolute inset-0">
+                  {/* 折叠态不把点击交给芯片，否则热区挡住短按，输入框展不开。删除只在展开态 */}
                   <BarDraftLine
                     ref={rowRef}
                     segments={segments}
@@ -443,7 +443,6 @@ export default function DeviceFrame({
                     showCaret={focused}
                     composeRef={composeRef}
                     armedN={armedN}
-                    onTagPress={onTagPress}
                   />
                 </div>
               ) : null}
@@ -491,13 +490,17 @@ export default function DeviceFrame({
         </div>
 
         {/* 点选按钮挂在这里，和全屏、输入框同一行 */}
+        {/* 用 left 收到右缘。真机上 right 会钉在 layout 视口，插槽收到 0 时按钮不动 */}
         <div
           ref={fabSlotRef}
           data-fs-edge={edge ? '1' : '0'}
+          data-fs-fab-slot=""
           className="absolute top-0 h-12 w-12"
           style={{
-            right: edge ? 0 : FS_SIDE_INSET,
-            transition: `right ${sideMotion}`,
+            left: edge ? 'calc(100% - 3rem)' : `calc(100% - 3rem - ${FS_SIDE_INSET}px)`,
+            right: 'auto',
+            transform: 'translateZ(0)',
+            transition: `left ${sideMotion}`,
           }}
         />
       </div>

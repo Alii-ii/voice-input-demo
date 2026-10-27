@@ -76,11 +76,18 @@ export default function InspectLab() {
   pickingRef.current = picking
 
   const addSelection = (info) => {
-    if (regionsRef.current.some((region) => region.el === info.el)) return
+    // 自由选区没有元素，不能按 el 去重，否则后面的圈选会被丢掉
+    if (info.el && regionsRef.current.some((region) => region.el === info.el)) return
     const n = regionsRef.current.reduce((max, region) => Math.max(max, region.n), 0) + 1
     const nextRegions = [
       ...regionsRef.current,
-      { n, el: info.el, summary: info.summary, text: info.text },
+      {
+        n,
+        el: info.el || null,
+        summary: info.summary,
+        text: info.text,
+        ...(info.free ? { free: info.free } : null),
+      },
     ]
     const nextDraft = insertTag(draftRef.current, { n, summary: info.summary })
     regionsRef.current = nextRegions
@@ -334,7 +341,6 @@ export default function InspectLab() {
           selectMode={selectMode}
           onExitSelect={discardSelections}
           armedN={selectMode === 'multi' ? armedN : null}
-          onTagPress={selectMode === 'multi' ? onTagPress : undefined}
           solo={
             soloDraft
               ? {

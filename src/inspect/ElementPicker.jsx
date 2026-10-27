@@ -7,6 +7,13 @@ import { describeElement, pickElement, readRadius } from './pickElement.js'
 import { FS_DOCK_MS, FS_EDGE_NUDGE, FS_ENTER_MS, FS_TWO_FINGER_MS } from './previewFullscreen.js'
 import { pointOnInspectChrome, resolveTwoFingerPoint } from './twoFingerPick.js'
 import { viewportPoint } from './viewportPoint.js'
+import {
+  freePathD,
+  overlayPointsToPageRatios,
+  pageRatiosToOverlay,
+  pathBounds,
+  pushFreePoint,
+} from './freeSelectPath.js'
 
 /** 与悬浮按钮同尺寸，未吸附时选框保持这个大小 */
 const BUTTON = 48
@@ -64,6 +71,12 @@ function radiusPx(radius) {
   return Number.isFinite(n) ? n : 0
 }
 
+function samePath(a, b) {
+  if (!a?.length && !b?.length) return true
+  if (!a || !b || a.length !== b.length) return false
+  return a.every((point, i) => nearly(point.x, b[i].x) && nearly(point.y, b[i].y))
+}
+
 function samePins(a, b) {
   if (a.length !== b.length) return false
   return a.every(
@@ -73,7 +86,8 @@ function samePins(a, b) {
       nearly(pin.top, b[i].top) &&
       nearly(pin.left, b[i].left) &&
       nearly(pin.width, b[i].width) &&
-      nearly(pin.height, b[i].height),
+      nearly(pin.height, b[i].height) &&
+      samePath(pin.path, b[i].path),
   )
 }
 
@@ -112,6 +126,7 @@ function releasedOnChrome(x, y) {
  * 两指都在手机框内，连线中点落在页面上按住 200ms 也进入多选，全屏与否都一样。
  * 底部输入框按住同样约 280ms：滑进页面走单选，没选中元素则只听写。
  * 多选确认后不退出：遮罩、已选高亮和序号都留着，可继续点下一个。
+ * 多选里拖过阈值则沿轨迹圈自由形状，松手收成自由选区；没超过仍是点击元素。
  * 输入卡片和键盘展开时，点页面只收起键盘，不确认新选区。
  */
 export default function ElementPicker({
@@ -145,11 +160,13 @@ export default function ElementPicker({
   const [pins, setPins] = useState([]) // 已确认选区的实时矩形
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
   const [fabSlot, setFabSlot] = useState(null)
+  const [lasso, setLasso] = useState(null) // 正在画的自由形状，遮罩坐标
 
-  // 底部系统栏先挂上插槽，点选按钮再挪进去，和全屏、输入框对齐
+  // 每次提交都看插槽还在不在。节点换了就要重新挂进去，不能留在已经脱离的层上
   useLayoutEffect(() => {
-    setFabSlot(fabSlotRef?.current ?? null)
-  }, [fabSlotRef])
+    const node = fabSlotRef?.current ?? null
+    setFabSlot((prev) => (prev === node ? prev : node))
+  })
 
   const activeRef = useRef(false)
   const soloRef = useRef(false)
@@ -160,6 +177,8 @@ export default function ElementPicker({
   const snappedRef = useRef(null) // 当前吸附到的真实元素
   const dragRef = useRef(null) // 从悬浮按钮按下的手势
   const pagePressRef = useRef(false) // 点选模式里再次按下页面
+  const lassoOriginRef = useRef(null) // 这次按下的视口坐标，超过阈值才开画
+  const lassoRef = useRef(null) // 已采样的遮罩坐标，松手后收成自由选区
   const onSelectRef = useRef(onSelect)
   const onDismissRef = useRef(onDismiss)
   const onSoloStartRef = useRef(onSoloStart)
@@ -232,6 +251,8 @@ export default function ElementPicker({
 
   // 每帧根据指针位置决定：落在按钮上 / 空白处保持原尺寸，否则吸附元素
   updateRef.current = (x, y) => {
+    // 自由形状已经在画，不再按经过的元素改框
+    if (lassoRef.current) return
     if ((!activeRef.current && !soloRef.current) || !phoneRef.current || !pageRef.current) return
     const phone = phoneBox()
     const outside =
@@ -299,8 +320,11 @@ export default function ElementPicker({
     snappedRef.current = null
     dragRef.current = null
     pagePressRef.current = false
+    lassoOriginRef.current = null
+    lassoRef.current = null
     setActive(false)
     setBox(null)
+    setLasso(null)
     notifyPicking(soloRef.current)
   }
 
@@ -323,6 +347,9 @@ export default function ElementPicker({
     }
     // 跟手时别让浏览器把移动当成页面滚动，否则 pointercancel 之后框就停住
     document.documentElement.style.touchAction = 'none'
+    lassoOriginRef.current = null
+    lassoRef.current = null
+    setLasso(null)
     pointRef.current = { x, y }
     updateRef.current(x, y)
   }
@@ -367,6 +394,20 @@ export default function ElementPicker({
     const origin = frame.getBoundingClientRect()
     const next = []
     for (const region of regionsRef.current) {
+      if (region.free?.length && pageRef.current) {
+        const path = pageRatiosToOverlay(region.free, pageRef.current, origin)
+        const bounds = pathBounds(path)
+        next.push({
+          n: region.n,
+          path,
+          top: bounds.top,
+          left: bounds.left,
+          width: bounds.width,
+          height: bounds.height,
+          radius: '0px',
+        })
+        continue
+      }
       const el = region.el
       if (!el?.isConnected) continue
       const rect = el.getBoundingClientRect()
@@ -419,6 +460,37 @@ export default function ElementPicker({
       const page = pageRef.current?.getBoundingClientRect()
       if (!page) return false
       return x >= page.left && x <= page.right && y >= page.top && y <= page.bottom
+    }
+
+    // 超过点击阈值后沿轨迹采样。返回 true 表示这次移动已经被自由形状吃掉
+    const extendLasso = (x, y) => {
+      const origin = lassoOriginRef.current
+      if (dragRef.current || !pagePressRef.current || !origin) return false
+      if (!activeRef.current || soloRef.current || editingRef.current) return false
+      const dx = x - origin.x
+      const dy = y - origin.y
+      if (!lassoRef.current && dx * dx + dy * dy <= DRAG_DISTANCE * DRAG_DISTANCE) return false
+      const overlay = overlayRef.current?.getBoundingClientRect()
+      if (!overlay) return false
+      const local = (px, py) => ({ x: px - overlay.left, y: py - overlay.top })
+      if (!lassoRef.current) {
+        lassoRef.current = [local(origin.x, origin.y)]
+        snappedRef.current = null
+        setBox(null)
+      }
+      lassoRef.current = pushFreePoint(lassoRef.current, local(x, y))
+      setLasso(lassoRef.current)
+      return true
+    }
+
+    const commitFree = (points) => {
+      const page = pageRef.current
+      const overlay = overlayRef.current?.getBoundingClientRect()
+      if (!page || !overlay || points.length < 2) return
+      onSelectRef.current?.({
+        el: null,
+        free: overlayPointsToPageRatios(points, overlay, page),
+      })
     }
 
     const twoFingerPoint = () =>
@@ -500,6 +572,22 @@ export default function ElementPicker({
       if (e.target instanceof Element && e.target.closest('[data-inspect-ime="bar"]')) {
         barHold.down(e.pointerId, p.x, p.y)
       }
+      // 序号、芯片、底栏按钮不开始圈选，短按仍走原来的删除或放弃
+      const blocked =
+        e.target instanceof Element &&
+        e.target.closest('[data-inspect-badge], [data-element-tag], [data-inspect-chrome]')
+      if (
+        !blocked &&
+        !pagePressRef.current &&
+        activeRef.current &&
+        !soloRef.current &&
+        !editingRef.current &&
+        pageHit(p.x, p.y)
+      ) {
+        pagePressRef.current = true
+        lassoOriginRef.current = { x: p.x, y: p.y }
+        lassoRef.current = null
+      }
     }
 
     // 返回 true 表示这根手指属于已经触发的双指手势，松开时不要再点一次
@@ -552,6 +640,7 @@ export default function ElementPicker({
         const dy = p.y - drag.y
         if (dx * dx + dy * dy > DRAG_DISTANCE * DRAG_DISTANCE) drag.moved = true
       }
+      if (extendLasso(p.x, p.y)) return
       schedule(p.x, p.y)
     }
 
@@ -564,6 +653,9 @@ export default function ElementPicker({
       if (guarded) {
         // 双指长按已经进入多选，这次松开不再确认元素，也不当成按钮点击
         pagePressRef.current = false
+        lassoOriginRef.current = null
+        lassoRef.current = null
+        setLasso(null)
         // 最后一根手指的 pointerup 已经过了输入框，这时再清掉短按抑制
         if (guardIdsRef.current.size === 0) markBarHold(false)
         return
@@ -577,8 +669,12 @@ export default function ElementPicker({
       }
       const drag = dragRef.current
       const pagePress = pagePressRef.current
+      const freePath = lassoRef.current
       dragRef.current = null
       pagePressRef.current = false
+      lassoOriginRef.current = null
+      lassoRef.current = null
+      if (freePath) setLasso(null)
       if (drag?.holdTimer) clearTimeout(drag.holdTimer)
       if (e.button !== 0 && (drag || pagePress)) return
 
@@ -605,6 +701,12 @@ export default function ElementPicker({
         return
       }
 
+      // 拖过阈值：收成一条自由选区，不按松手底下的元素确认
+      if (freePath && freePath.length >= 2 && pagePress && activeRef.current && !editingRef.current) {
+        commitFree(freePath)
+        return
+      }
+
       if (!activeRef.current || !pagePress) return
       updateRef.current(p.x, p.y)
       const el = snappedRef.current
@@ -622,6 +724,7 @@ export default function ElementPicker({
     const scroller = pageRef.current
     const onScroll = () => {
       syncPinsRef.current()
+      if (lassoRef.current) return
       const point = pointRef.current
       if (!activeRef.current || !point) return
       schedule(point.x, point.y)
@@ -630,6 +733,12 @@ export default function ElementPicker({
     const onCancel = (e) => {
       releaseFinger(e)
       if (barHold.up(e.pointerId) !== 'none') markBarHold(false)
+      if (fingersRef.current.size === 0 && lassoRef.current) {
+        lassoOriginRef.current = null
+        lassoRef.current = null
+        pagePressRef.current = false
+        setLasso(null)
+      }
     }
 
     const onClickCapture = (e) => {
@@ -645,6 +754,7 @@ export default function ElementPicker({
       const t = e.touches[0]
       if (!t) return
       const point = viewportPoint(t.clientX, t.clientY)
+      if (extendLasso(point.x, point.y)) return
       schedule(point.x, point.y)
     }
 
@@ -764,6 +874,7 @@ export default function ElementPicker({
   for (const pin of pins) {
     holes.push({
       key: `pin-${pin.n}`,
+      path: pin.path,
       top: pin.top,
       left: pin.left,
       width: pin.width,
@@ -772,7 +883,18 @@ export default function ElementPicker({
       deleting: deletingN != null && pin.n === deletingN,
     })
   }
-  if (tracking && box) {
+  if (lasso && lasso.length >= 2) {
+    const bounds = pathBounds(lasso)
+    holes.push({
+      key: 'lasso',
+      path: lasso,
+      top: bounds.top,
+      left: bounds.left,
+      width: bounds.width,
+      height: bounds.height,
+      rx: 0,
+    })
+  } else if (tracking && box) {
     holes.push({
       key: 'live',
       top: box.top,
@@ -798,14 +920,16 @@ export default function ElementPicker({
       title={solo ? '松开并发送' : active ? '放弃选择' : '进入点选'}
       style={{
         pointerEvents: 'auto',
-        ...(parked ? null : { bottom: docked ? 72 : 18 }),
+        ...(parked
+          ? { top: 0, left: 0, right: 'auto', bottom: 'auto' }
+          : { bottom: docked ? 72 : 18, left: 'calc(100% - 3rem - 14px)', right: 'auto' }),
         borderRadius: flatEdge ? '24px 0 0 24px' : '9999px',
         transition: `bottom 150ms cubic-bezier(0.4,0,0.2,1), transform 150ms cubic-bezier(0.4,0,0.2,1), box-shadow 150ms cubic-bezier(0.4,0,0.2,1), color 150ms cubic-bezier(0.4,0,0.2,1), border-radius ${sideMotion}`,
       }}
       className={cn(
         'z-40 flex h-12 w-12 touch-none cursor-pointer items-center justify-center text-black/90 shadow-[0_2px_10px_rgba(0,0,0,0.06)]',
         INSPECT_GLASS_CLASS,
-        parked ? 'relative' : 'absolute right-3.5',
+        parked ? 'absolute left-0 top-0' : 'absolute',
         solo
           ? ''
           : active
@@ -885,18 +1009,22 @@ export default function ElementPicker({
               height={phoneHeight}
             >
               <rect x="0" y="0" width={phoneWidth} height={phoneHeight} fill="white" />
-              {holes.map((hole) => (
-                <rect
-                  key={hole.key}
-                  x={hole.left}
-                  y={hole.top}
-                  width={Math.max(hole.width, 0)}
-                  height={Math.max(hole.height, 0)}
-                  rx={hole.rx}
-                  ry={hole.rx}
-                  fill="black"
-                />
-              ))}
+              {holes.map((hole) =>
+                hole.path?.length ? (
+                  <path key={hole.key} d={freePathD(hole.path)} fill="black" />
+                ) : (
+                  <rect
+                    key={hole.key}
+                    x={hole.left}
+                    y={hole.top}
+                    width={Math.max(hole.width, 0)}
+                    height={Math.max(hole.height, 0)}
+                    rx={hole.rx}
+                    ry={hole.rx}
+                    fill="black"
+                  />
+                ),
+              )}
             </mask>
           </defs>
           <rect
@@ -916,22 +1044,35 @@ export default function ElementPicker({
             }}
           />
           {/* 描边和挖洞同一组 x/y/宽高；只要虚线，不再铺淡蓝底 */}
-          {holes.map((hole) => (
-            <rect
-              key={`stroke-${hole.key}`}
-              data-inspect-frame=""
-              x={hole.left}
-              y={hole.top}
-              width={Math.max(hole.width, 0)}
-              height={Math.max(hole.height, 0)}
-              rx={hole.rx}
-              ry={hole.rx}
-              fill={hole.deleting ? 'rgba(255, 59, 48, 0.08)' : 'none'}
-              stroke={hole.deleting ? 'rgba(255, 59, 48, 0.95)' : FRAME_STROKE}
-              strokeWidth="0.5"
-              strokeDasharray={FRAME_DASH}
-            />
-          ))}
+          {holes.map((hole) =>
+            hole.path?.length ? (
+              <path
+                key={`stroke-${hole.key}`}
+                data-inspect-frame=""
+                data-free-path=""
+                d={freePathD(hole.path)}
+                fill={hole.deleting ? 'rgba(255, 59, 48, 0.08)' : 'none'}
+                stroke={hole.deleting ? 'rgba(255, 59, 48, 0.95)' : FRAME_STROKE}
+                strokeWidth="0.5"
+                strokeDasharray={FRAME_DASH}
+              />
+            ) : (
+              <rect
+                key={`stroke-${hole.key}`}
+                data-inspect-frame=""
+                x={hole.left}
+                y={hole.top}
+                width={Math.max(hole.width, 0)}
+                height={Math.max(hole.height, 0)}
+                rx={hole.rx}
+                ry={hole.rx}
+                fill={hole.deleting ? 'rgba(255, 59, 48, 0.08)' : 'none'}
+                stroke={hole.deleting ? 'rgba(255, 59, 48, 0.95)' : FRAME_STROKE}
+                strokeWidth="0.5"
+                strokeDasharray={FRAME_DASH}
+              />
+            ),
+          )}
         </svg>
       )}
 
@@ -955,10 +1096,14 @@ export default function ElementPicker({
               return
             }
             if (!active) return
-            // 点选模式里的再次按下：先吸附，松手时再确认
+            // 点选模式里的再次按下：先吸附，松手时再确认。拖过阈值则改画自由形状
             e.preventDefault()
-            pagePressRef.current = true
             const p = viewportPoint(e.clientX, e.clientY)
+            if (!pagePressRef.current) {
+              lassoOriginRef.current = { x: p.x, y: p.y }
+              lassoRef.current = null
+            }
+            pagePressRef.current = true
             pointRef.current = { x: p.x, y: p.y }
             updateRef.current(p.x, p.y)
           }}
