@@ -8,7 +8,6 @@ import { scrollChildIntoView } from './ScrollFadeLine.jsx'
 import { padCaretTextarea } from './syncImeScroll.js'
 import {
   FS_EDGE_NUDGE,
-  FS_INPUT_INSET,
   FS_SIDE_INSET,
   expandDuration,
   inputDuration,
@@ -291,11 +290,16 @@ export default function DeviceFrame({
 
       {/* 底栏按钮同样浮在遮罩上，整条灰底不再挡住遮罩 */}
       {/* 胶囊下方始终留出语音轴高度，听写开关时输入框不跳动；非听写只留空 */}
-      {/* 按钮绝对定位，输入框显隐时垂直位置不跳 */}
+      {/* 三个控件排成一行，位置跟着底栏走，不各自钉在屏幕坐标上 */}
       {/* 再抬起 Home 指示条的高度；桌面 env 为 0，仍是原来的 6px，贴边动画不改左右 */}
       <div
-        className="pointer-events-none absolute inset-x-0 bottom-[calc(6px+env(safe-area-inset-bottom,0px))] z-30"
-        style={{ height: 70 }}
+        className="pointer-events-none absolute inset-x-0 bottom-[calc(6px+env(safe-area-inset-bottom,0px))] z-30 flex items-start gap-2.5"
+        style={{
+          height: 70,
+          paddingLeft: edge ? 0 : FS_SIDE_INSET,
+          paddingRight: edge ? 0 : FS_SIDE_INSET,
+          transition: `padding ${sideMotion}`,
+        }}
         data-solo={dictating ? 'true' : undefined}
       >
         <button
@@ -308,11 +312,10 @@ export default function DeviceFrame({
           onClick={onToggleFullscreen}
           style={{
             pointerEvents: 'auto',
-            left: edge ? 0 : FS_SIDE_INSET,
             borderRadius: edge ? '0 24px 24px 0' : '24px',
-            transition: `left ${sideMotion}, border-radius ${sideMotion}`,
+            transition: `border-radius ${sideMotion}`,
           }}
-          className={`absolute top-0 flex h-12 w-12 items-center justify-center p-0 text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS}`}
+          className={`relative flex h-12 w-12 shrink-0 items-center justify-center p-0 text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS}`}
         >
           <span
             className="inline-flex"
@@ -333,11 +336,9 @@ export default function DeviceFrame({
         <div
           data-fs-input={showInput ? '1' : '0'}
           className={
-            'absolute top-0' + (showInput || !running ? '' : ' [&_*]:!pointer-events-none')
+            'relative min-w-0 flex-1' + (showInput || !running ? '' : ' [&_*]:!pointer-events-none')
           }
           style={{
-            left: FS_INPUT_INSET,
-            right: FS_INPUT_INSET,
             opacity: showInput ? 1 : 0,
             transform: showInput ? 'none' : 'translateY(12px)',
             pointerEvents: 'none',
@@ -489,17 +490,12 @@ export default function DeviceFrame({
           </div>
         </div>
 
-        {/* 点选按钮挂在这里，和全屏、输入框同一行 */}
-        {/* 用 right 贴底栏右缘。left 的 100% 不是这条底栏的宽，会把插槽钉到手机外面 */}
+        {/* 点选按钮挂在这里，和全屏、输入框同一行。贴边靠底栏左右内边距一起收到 0 */}
         <div
           ref={fabSlotRef}
           data-fs-edge={edge ? '1' : '0'}
           data-fs-fab-slot=""
-          className="absolute top-0 h-12 w-12"
-          style={{
-            right: edge ? 0 : FS_SIDE_INSET,
-            transition: `right ${sideMotion}`,
-          }}
+          className="relative h-12 w-12 shrink-0"
         />
       </div>
     </div>

@@ -904,8 +904,8 @@ export default function ElementPicker({
       rx: radiusPx(box.radius),
     })
   }
-  // 键盘或一行选区输入挡住底栏时，按钮回到手机框里并抬高；平时停在底栏插槽
-  const parked = Boolean(fabSlot) && !docked && !editing
+  // 按钮只作为底栏右侧那一格，不另用坐标钉在手机上
+  const parked = Boolean(fabSlot) && !docked
   // 全屏贴边时右侧圆角收成 0，图标往外挪 4px；选中态回到正圆
   const flatEdge = edgeDock && parked
   const fabButton = (
@@ -920,14 +920,13 @@ export default function ElementPicker({
       title={solo ? '松开并发送' : active ? '放弃选择' : '进入点选'}
       style={{
         pointerEvents: 'auto',
-        ...(parked ? { top: 0, left: 0 } : { bottom: docked ? 72 : 18 }),
         borderRadius: flatEdge ? '24px 0 0 24px' : '9999px',
         transition: `bottom 150ms cubic-bezier(0.4,0,0.2,1), transform 150ms cubic-bezier(0.4,0,0.2,1), box-shadow 150ms cubic-bezier(0.4,0,0.2,1), color 150ms cubic-bezier(0.4,0,0.2,1), border-radius ${sideMotion}`,
       }}
       className={cn(
         'z-40 flex h-12 w-12 touch-none cursor-pointer items-center justify-center text-black/90 shadow-[0_2px_10px_rgba(0,0,0,0.06)]',
         INSPECT_GLASS_CLASS,
-        parked ? 'absolute left-0 top-0' : 'absolute right-3.5',
+        'relative',
         solo
           ? ''
           : active
