@@ -16,6 +16,18 @@ export function pushFreePoint(points, point, min = SAMPLE_PX) {
   return [...points, point]
 }
 
+/**
+ * 双指围成的闭合路径。
+ * 起点边从 B 的落点连到 A 的落点，接着走 A 的轨迹，再用终点边连到 B 的终点，最后倒着走回 B。
+ * Z 会把路径收回到 B 的落点，所以不要把起点再重复一遍。
+ */
+export function closeTwoFingerPath(pathA, pathB) {
+  if (!pathA?.length || !pathB?.length) return []
+  const closed = [pathB[0], ...pathA]
+  for (let i = pathB.length - 1; i >= 1; i -= 1) closed.push(pathB[i])
+  return closed
+}
+
 /** 首尾闭合。洞和虚线都走这条路径，不用外接矩形 */
 export function freePathD(points) {
   if (!points?.length) return ''

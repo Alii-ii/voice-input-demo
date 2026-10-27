@@ -8,6 +8,7 @@ import { FS_DOCK_MS, FS_EDGE_NUDGE, FS_ENTER_MS, FS_TWO_FINGER_MS } from './prev
 import { pointOnInspectChrome, resolveTwoFingerPoint } from './twoFingerPick.js'
 import { viewportPoint } from './viewportPoint.js'
 import {
+  closeTwoFingerPath,
   freePathD,
   overlayPointsToPageRatios,
   pageRatiosToOverlay,
@@ -127,6 +128,7 @@ function releasedOnChrome(x, y) {
  * 底部输入框按住同样约 280ms：滑进页面走单选，没选中元素则只听写。
  * 多选确认后不退出：遮罩、已选高亮和序号都留着，可继续点下一个。
  * 多选里拖过阈值则沿轨迹圈自由形状，松手收成自由选区；没超过仍是点击元素。
+ * 已经在多选里时，两指滑动围成闭合选区：起点边、两侧轨迹、终点边。还没进多选时，双指长按仍是进入多选。
  * 输入卡片和键盘展开时，点页面只收起键盘，不确认新选区。
  */
 export default function ElementPicker({
@@ -186,6 +188,8 @@ export default function ElementPicker({
   const pagePressRef = useRef(false) // 点选模式里再次按下页面
   const lassoOriginRef = useRef(null) // 这次按下的视口坐标，超过阈值才开画
   const lassoRef = useRef(null) // 已采样的遮罩坐标，松手后收成自由选区
+  const twoStrokeRef = useRef(null) // 多选里的双指围区：两根手指各自的轨迹
+  const twoConsumedRef = useRef(new Set()) // 已经收过的那一指，剩下的不要改成单指套索
   const onSelectRef = useRef(onSelect)
   const onDismissRef = useRef(onDismiss)
   const onSoloStartRef = useRef(onSoloStart)
@@ -329,6 +333,9 @@ export default function ElementPicker({
     pagePressRef.current = false
     lassoOriginRef.current = null
     lassoRef.current = null
+    twoStrokeRef.current = null
+    twoConsumedRef.current.clear()
+    for (const finger of fingersRef.current.values()) finger.stroke = null
     setActive(false)
     setBox(null)
     setLasso(null)
@@ -356,6 +363,9 @@ export default function ElementPicker({
     document.documentElement.style.touchAction = 'none'
     lassoOriginRef.current = null
     lassoRef.current = null
+    twoStrokeRef.current = null
+    twoConsumedRef.current.clear()
+    for (const finger of fingersRef.current.values()) finger.stroke = null
     setLasso(null)
     pointRef.current = { x, y }
     updateRef.current(x, y)
@@ -469,8 +479,98 @@ export default function ElementPicker({
       return x >= page.left && x <= page.right && y >= page.top && y <= page.bottom
     }
 
+    // 滑出页面时停在最后一个还在页内的点，松手仍用这个点闭合
+    const sampleStroke = (finger, x, y) => {
+      const stroke = finger.stroke
+      if (!stroke) return
+      const dx = x - stroke.origin.x
+      const dy = y - stroke.origin.y
+      stroke.dist = Math.max(stroke.dist, Math.hypot(dx, dy))
+      // 页外不再往外延，沿用最后落在页内的位置
+      const inside = pageHit(x, y) ? { x, y } : stroke.lastInside
+      if (pageHit(x, y)) stroke.lastInside = inside
+      const overlay = overlayRef.current?.getBoundingClientRect()
+      if (!overlay || !inside) return
+      stroke.points = pushFreePoint(stroke.points, {
+        x: inside.x - overlay.left,
+        y: inside.y - overlay.top,
+      })
+    }
+
+    const publishTwoStroke = () => {
+      const gesture = twoStrokeRef.current
+      if (!gesture) return
+      const pathA = fingersRef.current.get(gesture.ids[0])?.stroke
+      const pathB = fingersRef.current.get(gesture.ids[1])?.stroke
+      if (!pathA || !pathB) return
+      const past =
+        pathA.dist * pathA.dist > DRAG_DISTANCE * DRAG_DISTANCE ||
+        pathB.dist * pathB.dist > DRAG_DISTANCE * DRAG_DISTANCE
+      // 两指都没超过点击阈值时不画出细线，松手仍按元素确认
+      if (!past) return
+      if (!gesture.armed) {
+        gesture.armed = true
+        snappedRef.current = null
+        setBox(null)
+        pagePressRef.current = false
+        lassoOriginRef.current = null
+      }
+      const closed = closeTwoFingerPath(pathA.points, pathB.points)
+      lassoRef.current = closed
+      setLasso(closed)
+    }
+
+    // 一根手指抬起就收成双指选区。另一根留下时不再改成单指套索
+    const takeTwoStroke = (pointerId, x, y) => {
+      if (twoConsumedRef.current.has(pointerId)) {
+        twoConsumedRef.current.delete(pointerId)
+        return 'consumed'
+      }
+      const gesture = twoStrokeRef.current
+      if (!gesture || !gesture.ids.includes(pointerId)) return 'none'
+      const finger = fingersRef.current.get(pointerId)
+      if (finger?.stroke) sampleStroke(finger, x, y)
+      publishTwoStroke()
+      const armed = gesture.armed
+      const pathA = fingersRef.current.get(gesture.ids[0])?.stroke
+      const pathB = fingersRef.current.get(gesture.ids[1])?.stroke
+      const closed = armed && pathA && pathB ? closeTwoFingerPath(pathA.points, pathB.points) : null
+      for (const id of gesture.ids) {
+        const item = fingersRef.current.get(id)
+        if (item) item.stroke = null
+        if (id !== pointerId) twoConsumedRef.current.add(id)
+      }
+      twoStrokeRef.current = null
+      lassoRef.current = null
+      setLasso(null)
+      if (armed && closed && closed.length >= 3 && activeRef.current && !editingRef.current) {
+        pagePressRef.current = false
+        lassoOriginRef.current = null
+        commitFree(closed)
+        return 'commit'
+      }
+      return 'tap'
+    }
+
+    const tryBeginTwoStroke = () => {
+      if (twoStrokeRef.current || !activeRef.current || soloRef.current || editingRef.current) return
+      const ids = []
+      for (const [id, finger] of fingersRef.current) {
+        if (!finger.stroke) continue
+        if (!pageHit(finger.stroke.origin.x, finger.stroke.origin.y)) continue
+        ids.push(id)
+      }
+      // 恰好两指、且都从预览页里落下，才围区
+      if (ids.length !== 2) return
+      twoStrokeRef.current = { ids, armed: false }
+      lassoRef.current = null
+      setLasso(null)
+      publishTwoStroke()
+    }
+
     // 超过点击阈值后沿轨迹采样。返回 true 表示这次移动已经被自由形状吃掉
     const extendLasso = (x, y) => {
+      if (twoStrokeRef.current) return true
       const origin = lassoOriginRef.current
       if (dragRef.current || !pagePressRef.current || !origin) return false
       if (!activeRef.current || soloRef.current || editingRef.current) return false
@@ -570,19 +670,34 @@ export default function ElementPicker({
       if (e.button !== 0) return
       const p = viewportPoint(e.clientX, e.clientY)
       if (!phoneHit(p.x, p.y)) return
-      fingersRef.current.set(e.pointerId, {
-        x: p.x,
-        y: p.y,
-      })
+      const fingerRec = { x: p.x, y: p.y }
+      // 序号、芯片、底栏按钮不开始圈选，短按仍走原来的删除或放弃
+      const blocked =
+        e.target instanceof Element &&
+        e.target.closest('[data-inspect-badge], [data-element-tag], [data-inspect-chrome]')
+      // 已经在多选里、且这指落在预览页上，才记下这侧轨迹。还没进多选时仍走双指长按
+      const overlay = overlayRef.current?.getBoundingClientRect()
+      if (
+        overlay &&
+        !blocked &&
+        activeRef.current &&
+        !soloRef.current &&
+        !editingRef.current &&
+        pageHit(p.x, p.y)
+      ) {
+        fingerRec.stroke = {
+          origin: { x: p.x, y: p.y },
+          lastInside: { x: p.x, y: p.y },
+          points: [{ x: p.x - overlay.left, y: p.y - overlay.top }],
+          dist: 0,
+        }
+      }
+      fingersRef.current.set(e.pointerId, fingerRec)
       scheduleTwoFinger()
       // 不 preventDefault，短按仍能聚焦输入框、继续拼音
       if (e.target instanceof Element && e.target.closest('[data-inspect-ime="bar"]')) {
         barHold.down(e.pointerId, p.x, p.y)
       }
-      // 序号、芯片、底栏按钮不开始圈选，短按仍走原来的删除或放弃
-      const blocked =
-        e.target instanceof Element &&
-        e.target.closest('[data-inspect-badge], [data-element-tag], [data-inspect-chrome]')
       if (
         !blocked &&
         !pagePressRef.current &&
@@ -595,6 +710,7 @@ export default function ElementPicker({
         lassoOriginRef.current = { x: p.x, y: p.y }
         lassoRef.current = null
       }
+      tryBeginTwoStroke()
     }
 
     // 返回 true 表示这根手指属于已经触发的双指手势，松开时不要再点一次
@@ -626,6 +742,14 @@ export default function ElementPicker({
         barHold.move(e.pointerId, p.x, p.y)
         if (guardIdsRef.current.has(e.pointerId)) return
         scheduleTwoFinger()
+        if (twoConsumedRef.current.has(e.pointerId)) return
+        // 双指围区时每根手指只延长自己的一侧，不收成一条折线，也不再吸附元素
+        if (finger.stroke && twoStrokeRef.current) {
+          sampleStroke(finger, p.x, p.y)
+          if (twoStrokeRef.current.ids.includes(e.pointerId)) publishTwoStroke()
+          return
+        }
+        if (finger.stroke && !twoStrokeRef.current) sampleStroke(finger, p.x, p.y)
       }
       const drag = dragRef.current
       if (drag && !drag.armed) {
@@ -654,9 +778,16 @@ export default function ElementPicker({
     // 松开时才确认多选。单选松手交给父级发送，不插入选区序号
     const onUp = (e) => {
       const p = viewportPoint(e.clientX, e.clientY)
+      const twoResult = takeTwoStroke(e.pointerId, p.x, p.y)
       const guarded = releaseFinger(e)
       const barResult = barHold.up(e.pointerId)
       if (barResult !== 'none') markBarHold(false)
+      if (twoResult === 'commit' || twoResult === 'consumed') {
+        pagePressRef.current = false
+        lassoOriginRef.current = null
+        lassoRef.current = null
+        return
+      }
       if (guarded) {
         // 双指长按已经进入多选，这次松开不再确认元素，也不当成按钮点击
         pagePressRef.current = false
@@ -738,8 +869,11 @@ export default function ElementPicker({
     }
 
     const onCancel = (e) => {
+      const p = viewportPoint(e.clientX, e.clientY)
+      const twoResult = takeTwoStroke(e.pointerId, p.x, p.y)
       releaseFinger(e)
       if (barHold.up(e.pointerId) !== 'none') markBarHold(false)
+      if (twoResult === 'commit' || twoResult === 'consumed') return
       if (fingersRef.current.size === 0 && lassoRef.current) {
         lassoOriginRef.current = null
         lassoRef.current = null
@@ -758,6 +892,8 @@ export default function ElementPicker({
     const onTouchMove = (e) => {
       if (!soloRef.current && !activeRef.current) return
       if (e.cancelable) e.preventDefault()
+      // 双指轨迹由 pointermove 按 pointerId 采样，这里不要再收成单指
+      if (twoStrokeRef.current) return
       const t = e.touches[0]
       if (!t) return
       const point = viewportPoint(t.clientX, t.clientY)
@@ -791,6 +927,8 @@ export default function ElementPicker({
       window.clearTimeout(blockClickTimerRef.current)
       fingersRef.current.clear()
       guardIdsRef.current.clear()
+      twoStrokeRef.current = null
+      twoConsumedRef.current.clear()
       blockClickRef.current = false
     }
   }, [pageRef])
@@ -1100,6 +1238,11 @@ export default function ElementPicker({
               return
             }
             if (!active) return
+            // 双指围区已经在 window 捕获里记下了，这里不要再清掉闭合路径
+            if (twoStrokeRef.current) {
+              e.preventDefault()
+              return
+            }
             // 点选模式里的再次按下：先吸附，松手时再确认。拖过阈值则改画自由形状
             e.preventDefault()
             const p = viewportPoint(e.clientX, e.clientY)
