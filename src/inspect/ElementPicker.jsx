@@ -920,16 +920,14 @@ export default function ElementPicker({
       title={solo ? '松开并发送' : active ? '放弃选择' : '进入点选'}
       style={{
         pointerEvents: 'auto',
-        ...(parked
-          ? { top: 0, left: 0, right: 'auto', bottom: 'auto' }
-          : { bottom: docked ? 72 : 18, left: 'calc(100% - 3rem - 14px)', right: 'auto' }),
+        ...(parked ? { top: 0, left: 0 } : { bottom: docked ? 72 : 18 }),
         borderRadius: flatEdge ? '24px 0 0 24px' : '9999px',
         transition: `bottom 150ms cubic-bezier(0.4,0,0.2,1), transform 150ms cubic-bezier(0.4,0,0.2,1), box-shadow 150ms cubic-bezier(0.4,0,0.2,1), color 150ms cubic-bezier(0.4,0,0.2,1), border-radius ${sideMotion}`,
       }}
       className={cn(
         'z-40 flex h-12 w-12 touch-none cursor-pointer items-center justify-center text-black/90 shadow-[0_2px_10px_rgba(0,0,0,0.06)]',
         INSPECT_GLASS_CLASS,
-        parked ? 'absolute left-0 top-0' : 'absolute',
+        parked ? 'absolute left-0 top-0' : 'absolute right-3.5',
         solo
           ? ''
           : active

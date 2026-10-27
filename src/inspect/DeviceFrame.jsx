@@ -490,17 +490,15 @@ export default function DeviceFrame({
         </div>
 
         {/* 点选按钮挂在这里，和全屏、输入框同一行 */}
-        {/* 用 left 收到右缘。真机上 right 会钉在 layout 视口，插槽收到 0 时按钮不动 */}
+        {/* 用 right 贴底栏右缘。left 的 100% 不是这条底栏的宽，会把插槽钉到手机外面 */}
         <div
           ref={fabSlotRef}
           data-fs-edge={edge ? '1' : '0'}
           data-fs-fab-slot=""
           className="absolute top-0 h-12 w-12"
           style={{
-            left: edge ? 'calc(100% - 3rem)' : `calc(100% - 3rem - ${FS_SIDE_INSET}px)`,
-            right: 'auto',
-            transform: 'translateZ(0)',
-            transition: `left ${sideMotion}`,
+            right: edge ? 0 : FS_SIDE_INSET,
+            transition: `right ${sideMotion}`,
           }}
         />
       </div>
