@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import AgentPhrase from './AgentPhrase.jsx'
 import BarDraftLine from './BarDraftLine.jsx'
@@ -74,6 +74,12 @@ export default function DeviceFrame({
   const dictatingRef = useRef(false)
   const showInputRef = useRef(true)
   const [focused, setFocused] = useState(false)
+  // 插槽节点一出现就通知点选按钮。回调保持稳定，避免每次提交先清空再重挂
+  const bindFabSlot = useCallback((node) => {
+    if (!fabSlotRef) return
+    fabSlotRef.current = node
+    fabSlotRef.bind?.(node)
+  }, [fabSlotRef])
   onInsertRef.current = onInsert
   onActivateRef.current = onActivate
   runningRef.current = running
@@ -492,7 +498,7 @@ export default function DeviceFrame({
 
         {/* 点选按钮挂在这里，和全屏、输入框同一行。贴边靠底栏左右内边距一起收到 0 */}
         <div
-          ref={fabSlotRef}
+          ref={bindFabSlot}
           data-fs-edge={edge ? '1' : '0'}
           data-fs-fab-slot=""
           className="relative h-12 w-12 shrink-0"

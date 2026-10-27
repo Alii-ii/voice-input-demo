@@ -162,10 +162,17 @@ export default function ElementPicker({
   const [fabSlot, setFabSlot] = useState(null)
   const [lasso, setLasso] = useState(null) // 正在画的自由形状，遮罩坐标
 
-  // 插槽在同一次提交里已经挂上，只绑这一次。每次提交都 setState 会超过嵌套更新上限，整页被卸掉
+  // 生产构建里这条 effect 可能早于底栏插槽。插槽出现时再绑一次，只在节点变化时更新，避免嵌套更新把整页卸掉
   useLayoutEffect(() => {
-    const node = fabSlotRef?.current ?? null
-    setFabSlot((prev) => (prev === node ? prev : node))
+    if (!fabSlotRef) return
+    const bind = (node) => {
+      setFabSlot((prev) => (prev === node ? prev : node))
+    }
+    fabSlotRef.bind = bind
+    bind(fabSlotRef.current ?? null)
+    return () => {
+      if (fabSlotRef.bind === bind) fabSlotRef.bind = null
+    }
   }, [fabSlotRef])
 
   const activeRef = useRef(false)
