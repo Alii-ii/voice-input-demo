@@ -9,6 +9,7 @@ import { backspace, createDraft, insertTag, insertText, moveCursor, plainCaret, 
 import { appendSoloSpeech, createSoloDraft, formatSoloMessage, replaceSoloTag } from './soloDraft.js'
 import { cn } from '../lib/cn.js'
 import { useMobileStage } from '../lib/useMobileStage.js'
+import { useVisualFrame } from './useVisualFrame.js'
 
 /** 发出后若没点停止，大约 5 秒回到空闲底栏 */
 const AGENT_RUN_MS = 5000
@@ -31,6 +32,8 @@ export default function InspectLab() {
   const { phase, entering, fullscreen, toggle, syncInput } = usePreviewFullscreen()
   // 窄屏或粗指针放不下说明时，整台手机铺满视口。不调用全屏 toggle，phase 仍由产品按钮决定
   const mobileStage = useMobileStage()
+  // 窄屏壳子跟可视区，而不是 100vh 的 layout 视口
+  const visualFrame = useVisualFrame(mobileStage)
   // 全屏输入框只跟正在点选走：多选（picking）或单选听写（soloDraft）。
   // 退出点选后即使选区还在，以及 running 为真，都不 syncInput(true)。
   // 非全屏 phase 是 off，syncInput 不会改显示，底栏输入框始终在。
@@ -233,7 +236,13 @@ export default function InspectLab() {
   }
 
   return (
-    <div className="flex h-full min-h-0 items-center justify-center gap-10 px-5 py-4">
+    <div
+      className={cn(
+        'flex min-h-0 items-center justify-center gap-10 px-5 py-4',
+        // 窄屏用动态视口高度，避免 100vh 把整页撑到地址栏下面
+        mobileStage ? 'h-dvh overflow-hidden' : 'h-full',
+      )}
+    >
       <div
         ref={phoneRef}
         data-fs-phase={phase}
@@ -241,11 +250,22 @@ export default function InspectLab() {
         className={cn(
           'shrink-0 overflow-hidden bg-[#e8e9eb]',
           // 移动端不要和 relative 同时写：Tailwind 里后出现的 position 会盖住 fixed
+          // 不用 inset-0：那跟着 layout 视口。高用 100dvh 兜底，再写 visualViewport 的顶和尺寸
           // 只去掉浮在深色页面上的圆角阴影和 390 居中，壳内仍是普通布局
           mobileStage
-            ? 'fixed inset-0 z-10 rounded-none shadow-none'
+            ? 'fixed z-10 h-dvh rounded-none shadow-none'
             : 'relative h-[min(844px,100%)] w-[390px] max-w-full rounded-[40px] shadow-[0_24px_70px_rgba(0,0,0,0.45)]',
         )}
+        style={
+          mobileStage
+            ? {
+                top: visualFrame.top,
+                left: visualFrame.left,
+                width: visualFrame.width,
+                height: visualFrame.height,
+              }
+            : undefined
+        }
       >
         <div
           className="h-full"
@@ -347,22 +367,6 @@ export default function InspectLab() {
           />
         ) : null}
       </div>
-
-      <aside className="hidden w-[220px] shrink-0 text-[13px] leading-6 text-[#b7b7b9] xl:block">
-        <p className="m-0 mb-2 text-[15px] font-medium text-white">点选编辑</p>
-        <p className="m-0">
-          轻点右下角按钮进入多选，再点元素即可累加序号。按住约 0.28 秒或拖动则进入单选：跟手听写，松手把当前元素和识别文字发出去，不改已有多选。
-        </p>
-        <p className="m-0 mt-2">
-          点左下角进入全屏：顶栏和输入框先收起，预览铺满，两侧按钮再贴边。两指按在手机框里、连线中点落在页面上约 0.2 秒进入多选，全屏和非全屏都一样，输入框会回来；退出点选后再次收起，已有选区或执行中也不会留着。底部输入框按住约 0.28 秒也可以听写，滑进页面会带上元素，没选中就只发语音。再点左侧按钮回到原来的布局。
-        </p>
-        <p className="m-0 mt-2">
-          有选区后，草稿显示在底部系统框那条单行输入里，内容是「选区N」和已输入文字。点这一行才升起键盘。Esc 或点页面只收起键盘。点发送会清掉选区并让底栏进入进行中，点暂停或数秒后回到按住说话。同一元素不重复添加，退格删掉标签会同步去掉高亮和序号。
-        </p>
-        <p className="m-0 mt-2">
-          键盘态里发送旁边的麦克风与语音输入页相同：点一下进入，按住约 0.4 秒后松开即结束。识别文字插入当前光标。
-        </p>
-      </aside>
     </div>
   )
 }

@@ -6,6 +6,7 @@ import { INSPECT_GLASS_CLASS } from './glassChrome.js'
 import { describeElement, pickElement, readRadius } from './pickElement.js'
 import { FS_DOCK_MS, FS_EDGE_NUDGE, FS_ENTER_MS, FS_TWO_FINGER_MS } from './previewFullscreen.js'
 import { pointOnInspectChrome, resolveTwoFingerPoint } from './twoFingerPick.js'
+import { viewportPoint } from './viewportPoint.js'
 
 /** 与悬浮按钮同尺寸，未吸附时选框保持这个大小 */
 const BUTTON = 48
@@ -246,8 +247,12 @@ export default function ElementPicker({
     }
 
     let next
+    const pageRect = pageRef.current.getBoundingClientRect()
+    const onPage =
+      x >= pageRect.left && x <= pageRect.right && y >= pageRect.top && y <= pageRect.bottom
     // 系统按钮（含底部输入框）不透传命中，避免把按钮底下的页面元素当成选中
-    if (insideFab(x, y) || pointOnInspectChrome(x, y)) {
+    // 手指已经滑进预览页时，不要再把命中当成系统按钮，否则框会停在输入框外面
+    if (!onPage && (insideFab(x, y) || pointOnInspectChrome(x, y))) {
       snappedRef.current = null
       next = freeBox(x, y)
       if (soloRef.current && lastSoloElRef.current) {
@@ -316,11 +321,14 @@ export default function ElementPicker({
       notifyPicking(true)
       onSoloStartRef.current?.()
     }
+    // 跟手时别让浏览器把移动当成页面滚动，否则 pointercancel 之后框就停住
+    document.documentElement.style.touchAction = 'none'
     pointRef.current = { x, y }
     updateRef.current(x, y)
   }
 
   const endSolo = (keepMulti) => {
+    document.documentElement.style.touchAction = ''
     soloRef.current = false
     lastSoloElRef.current = null
     snappedRef.current = null
@@ -438,14 +446,13 @@ export default function ElementPicker({
       onArm: (pointerId, x, y) => {
         const el = markBarHold(true)
         blockClickRef.current = true
-        if (el) {
-          el.blur()
-          try {
-            el.setPointerCapture(pointerId)
-          } catch {
-            /* 个别环境不支持 capture，松手仍由 window pointerup 接管 */
-          }
+        // 捕获留在输入框上时，手指滑出输入框就收不到 move。改挂到根节点
+        try {
+          document.documentElement.setPointerCapture(pointerId)
+        } catch {
+          /* 个别环境不支持 capture，松手仍由 window pointerup 接管 */
         }
+        if (el) el.blur()
         beginSolo(x, y)
       },
     })
@@ -482,15 +489,16 @@ export default function ElementPicker({
 
     const onFingerDown = (e) => {
       if (e.button !== 0) return
-      if (!phoneHit(e.clientX, e.clientY)) return
+      const p = viewportPoint(e.clientX, e.clientY)
+      if (!phoneHit(p.x, p.y)) return
       fingersRef.current.set(e.pointerId, {
-        x: e.clientX,
-        y: e.clientY,
+        x: p.x,
+        y: p.y,
       })
       scheduleTwoFinger()
       // 不 preventDefault，短按仍能聚焦输入框、继续拼音
       if (e.target instanceof Element && e.target.closest('[data-inspect-ime="bar"]')) {
-        barHold.down(e.pointerId, e.clientX, e.clientY)
+        barHold.down(e.pointerId, p.x, p.y)
       }
     }
 
@@ -512,19 +520,22 @@ export default function ElementPicker({
     }
 
     const onMove = (e) => {
+      // 单选已经成立才拦住滚动；成立前不 preventDefault，短按仍能聚焦
+      if ((soloRef.current || activeRef.current) && e.cancelable) e.preventDefault()
+      const p = viewportPoint(e.clientX, e.clientY)
       const finger = fingersRef.current.get(e.pointerId)
       if (finger) {
-        finger.x = e.clientX
-        finger.y = e.clientY
+        finger.x = p.x
+        finger.y = p.y
         // 还没成立时中点跟着走，离开页面或按钮就取消这 200ms
-        barHold.move(e.pointerId, e.clientX, e.clientY)
+        barHold.move(e.pointerId, p.x, p.y)
         if (guardIdsRef.current.has(e.pointerId)) return
         scheduleTwoFinger()
       }
       const drag = dragRef.current
       if (drag && !drag.armed) {
-        const dx = e.clientX - drag.x
-        const dy = e.clientY - drag.y
+        const dx = p.x - drag.x
+        const dy = p.y - drag.y
         if (dx * dx + dy * dy > DRAG_DISTANCE * DRAG_DISTANCE) {
           drag.moved = true
           drag.armed = true
@@ -532,20 +543,21 @@ export default function ElementPicker({
             clearTimeout(drag.holdTimer)
             drag.holdTimer = 0
           }
-          beginSolo(e.clientX, e.clientY)
+          beginSolo(p.x, p.y)
         }
       }
       if (!activeRef.current && !soloRef.current) return
       if (drag && !drag.moved) {
-        const dx = e.clientX - drag.x
-        const dy = e.clientY - drag.y
+        const dx = p.x - drag.x
+        const dy = p.y - drag.y
         if (dx * dx + dy * dy > DRAG_DISTANCE * DRAG_DISTANCE) drag.moved = true
       }
-      schedule(e.clientX, e.clientY)
+      schedule(p.x, p.y)
     }
 
     // 松开时才确认多选。单选松手交给父级发送，不插入选区序号
     const onUp = (e) => {
+      const p = viewportPoint(e.clientX, e.clientY)
       const guarded = releaseFinger(e)
       const barResult = barHold.up(e.pointerId)
       if (barResult !== 'none') markBarHold(false)
@@ -571,7 +583,7 @@ export default function ElementPicker({
       if (e.button !== 0 && (drag || pagePress)) return
 
       if (drag?.armed || soloRef.current) {
-        updateRef.current(e.clientX, e.clientY)
+        updateRef.current(p.x, p.y)
         const el = snappedRef.current
         const info = el
           ? { el, summary: describeElement(el, el.getBoundingClientRect()), text: elementTitle(el) }
@@ -584,19 +596,19 @@ export default function ElementPicker({
 
       if (drag) {
         // 还没超过位移、也没到按住时间：这是点击
-        if (drag.startedActive && !drag.moved && insideFab(e.clientX, e.clientY)) {
+        if (drag.startedActive && !drag.moved && insideFab(p.x, p.y)) {
           // 再点一次是放弃：清掉已经插入的选区再退出，不要只退出而把选区留下
           onDiscardRef.current?.()
           return
         }
-        if (!drag.startedActive) enter(e.clientX, e.clientY)
+        if (!drag.startedActive) enter(p.x, p.y)
         return
       }
 
       if (!activeRef.current || !pagePress) return
-      updateRef.current(e.clientX, e.clientY)
+      updateRef.current(p.x, p.y)
       const el = snappedRef.current
-      const onChrome = releasedOnChrome(e.clientX, e.clientY)
+      const onChrome = releasedOnChrome(p.x, p.y)
       if (!onChrome && !editingRef.current && el) confirm(el)
     }
 
@@ -626,18 +638,31 @@ export default function ElementPicker({
       e.stopPropagation()
     }
 
+    // 输入框上的指针捕获在真机上经常丢 move，捕获阶段和 touchmove 再接一次
+    const onTouchMove = (e) => {
+      if (!soloRef.current && !activeRef.current) return
+      if (e.cancelable) e.preventDefault()
+      const t = e.touches[0]
+      if (!t) return
+      const point = viewportPoint(t.clientX, t.clientY)
+      schedule(point.x, point.y)
+    }
+
     window.addEventListener('pointerdown', onFingerDown, true)
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onCancel)
+    window.addEventListener('pointermove', onMove, true)
+    window.addEventListener('pointerup', onUp, true)
+    window.addEventListener('pointercancel', onCancel, true)
+    window.addEventListener('touchmove', onTouchMove, { capture: true, passive: false })
     window.addEventListener('keydown', onKey)
     window.addEventListener('click', onClickCapture, true)
     scroller?.addEventListener('scroll', onScroll, { passive: true })
     return () => {
+      document.documentElement.style.touchAction = ''
       window.removeEventListener('pointerdown', onFingerDown, true)
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onCancel)
+      window.removeEventListener('pointermove', onMove, true)
+      window.removeEventListener('pointerup', onUp, true)
+      window.removeEventListener('pointercancel', onCancel, true)
+      window.removeEventListener('touchmove', onTouchMove, { capture: true })
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('click', onClickCapture, true)
       scroller?.removeEventListener('scroll', onScroll)
@@ -791,9 +816,10 @@ export default function ElementPicker({
         if (e.button !== 0) return
         e.preventDefault()
         pagePressRef.current = false
+        const p = viewportPoint(e.clientX, e.clientY)
         const gesture = {
-          x: e.clientX,
-          y: e.clientY,
+          x: p.x,
+          y: p.y,
           moved: false,
           armed: false,
           holdTimer: 0,
@@ -932,8 +958,9 @@ export default function ElementPicker({
             // 点选模式里的再次按下：先吸附，松手时再确认
             e.preventDefault()
             pagePressRef.current = true
-            pointRef.current = { x: e.clientX, y: e.clientY }
-            updateRef.current(e.clientX, e.clientY)
+            const p = viewportPoint(e.clientX, e.clientY)
+            pointRef.current = { x: p.x, y: p.y }
+            updateRef.current(p.x, p.y)
           }}
           onWheel={(e) => {
             const scroller = pageRef.current

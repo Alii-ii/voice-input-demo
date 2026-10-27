@@ -293,8 +293,9 @@ export default function DeviceFrame({
       {/* 底栏按钮同样浮在遮罩上，整条灰底不再挡住遮罩 */}
       {/* 胶囊下方始终留出语音轴高度，听写开关时输入框不跳动；非听写只留空 */}
       {/* 按钮绝对定位，输入框显隐时垂直位置不跳 */}
+      {/* 再抬起 Home 指示条的高度；桌面 env 为 0，仍是原来的 6px，贴边动画不改左右 */}
       <div
-        className="pointer-events-none absolute inset-x-0 bottom-[6px] z-30"
+        className="pointer-events-none absolute inset-x-0 bottom-[calc(6px+env(safe-area-inset-bottom,0px))] z-30"
         style={{ height: 70 }}
         data-solo={dictating ? 'true' : undefined}
       >
