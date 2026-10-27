@@ -1,8 +1,11 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import AgentPhrase from './AgentPhrase.jsx'
+import BarDraftLine from './BarDraftLine.jsx'
 import { SoloScrollLine, SoloWave } from './SoloComposer.jsx'
 import { INSPECT_GLASS_CLASS } from './glassChrome.js'
+import { scrollChildIntoView } from './ScrollFadeLine.jsx'
+import { padCaretTextarea } from './syncImeScroll.js'
 import {
   FS_EDGE_NUDGE,
   FS_INPUT_INSET,
@@ -45,6 +48,8 @@ export default function DeviceFrame({
   fabSlotRef,
   text = '',
   caret = 0,
+  segments = null,
+  cursor = null,
   running = false,
   onActivate,
   onStop,
@@ -54,15 +59,35 @@ export default function DeviceFrame({
   fsEntering = false,
   onToggleFullscreen,
   barHoldEnabled = false,
+  selectMode = null,
+  onExitSelect,
+  armedN = null,
+  onTagPress,
 }) {
   const inputRef = useRef(null)
+  const rowRef = useRef(null)
+  const composeRef = useRef(null)
+  const composingRef = useRef('')
+  const pendingExpandRef = useRef(false)
+  const panRef = useRef(null)
   const onInsertRef = useRef(onInsert)
+  const onActivateRef = useRef(onActivate)
+  const runningRef = useRef(running)
+  const dictatingRef = useRef(false)
+  const showInputRef = useRef(true)
+  const [focused, setFocused] = useState(false)
   onInsertRef.current = onInsert
+  onActivateRef.current = onActivate
+  runningRef.current = running
   const dictating = !!solo
+  dictatingRef.current = dictating
   const fullscreen = fsPhase !== 'off'
   // 贴边只在全屏空闲；选中态和普通布局都把圆钮留在能夹住输入框的位置
   const edge = fsPhase === 'dock'
   const showInput = !fullscreen || fsPhase === 'pick'
+  showInputRef.current = showInput
+  // 缩略态用芯片层画草稿；textarea 仍是真正的焦点，给拼音用
+  const rich = !running && !dictating && Array.isArray(segments)
   const topMotion = expandDuration(fsEntering)
   const sideMotion = sideDuration(fsPhase)
   const inputMotion = inputDuration(fsPhase, fsEntering)
@@ -71,23 +96,122 @@ export default function DeviceFrame({
   useEffect(() => {
     const el = inputRef.current
     if (!el) return undefined
+    const paint = () => {
+      const node = composeRef.current
+      if (node && node.textContent !== composingRef.current) node.textContent = composingRef.current
+      const row = rowRef.current
+      if (row && node && composingRef.current) {
+        scrollChildIntoView(row, node)
+        row.dispatchEvent(new Event('scroll'))
+      }
+    }
+    const onCompositionStart = () => {
+      composingRef.current = ''
+      el.dataset.inspectComposing = '1'
+      paint()
+    }
+    const onCompositionUpdate = (e) => {
+      if (el.readOnly) return
+      composingRef.current = e.data || ''
+      paint()
+    }
     const onCompositionEnd = (e) => {
+      composingRef.current = ''
+      delete el.dataset.inspectComposing
+      paint()
       if (el.readOnly) return
       const data = e.data
       if (!data) return
       // 上屏后立刻写进受控 value，避免读到组词前的旧文本
       flushSync(() => onInsertRef.current?.(data))
     }
+    el.addEventListener('compositionstart', onCompositionStart)
+    el.addEventListener('compositionupdate', onCompositionUpdate)
     el.addEventListener('compositionend', onCompositionEnd)
-    return () => el.removeEventListener('compositionend', onCompositionEnd)
+    return () => {
+      el.removeEventListener('compositionstart', onCompositionStart)
+      el.removeEventListener('compositionupdate', onCompositionUpdate)
+      el.removeEventListener('compositionend', onCompositionEnd)
+    }
   }, [])
 
-  // 内容变化时把光标或末尾留在胶囊里，不把整行撑开
+  // 父级重绘时把还在组的词补回去，避免受控 value 把组词清掉
+  useLayoutEffect(() => {
+    const node = composeRef.current
+    if (node && node.textContent !== composingRef.current) node.textContent = composingRef.current
+  })
+
+  // 捕获阶段先于点选逻辑清掉 armed 标记，短按才能展开，长按仍留给听写
+  useEffect(() => {
+    const onUp = (e) => {
+      if (e.button !== 0) return
+      const pan = panRef.current
+      panRef.current = null
+      if (!pendingExpandRef.current) return
+      pendingExpandRef.current = false
+      const el = inputRef.current
+      if (!el) return
+      if (el.dataset.inspectHold === 'armed') return
+      if (!showInputRef.current || runningRef.current || dictatingRef.current) return
+      if (pan && pan.id === e.pointerId) {
+        const dx = e.clientX - pan.x
+        const dy = e.clientY - pan.y
+        if (pan.scrolling || pan.locked || dx * dx + dy * dy > 64) return
+      }
+      onActivateRef.current?.()
+    }
+    window.addEventListener('pointerup', onUp, true)
+    return () => window.removeEventListener('pointerup', onUp, true)
+  }, [])
+
+  // 滚动条藏掉之后，滚轮仍推动芯片行
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return undefined
+    const onWheel = (e) => {
+      const row = rowRef.current
+      if (!row || row.scrollWidth - row.clientWidth <= 2) return
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+      if (!delta) return
+      row.scrollLeft += delta
+      e.preventDefault()
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  // 芯片行按实际渲染宽度滚光标；拼音框的 scrollLeft 跟着这一行，不按纯文本另算
   useLayoutEffect(() => {
     const el = inputRef.current
     if (!el || running || dictating) return
+    if (rich && rowRef.current) {
+      const row = rowRef.current
+      const caretEl = row.querySelector('[data-inspect-caret]')
+      const caretX = caretEl ? caretEl.offsetLeft : 0
+      if (!el.dataset.inspectComposing && (caretX > 1 || row.scrollWidth > row.clientWidth + 2)) {
+        padCaretTextarea(el, caretX, row.scrollWidth)
+      }
+      if (el.scrollLeft !== row.scrollLeft) el.scrollLeft = row.scrollLeft
+      return
+    }
     scrollCaretIntoView(el, caret)
-  }, [text, caret, running, dictating])
+  })
+
+  useEffect(() => {
+    const row = rowRef.current
+    const el = inputRef.current
+    if (!row || !el || !rich) return undefined
+    const sync = () => {
+      const caretEl = row.querySelector('[data-inspect-caret]')
+      const caretX = caretEl ? caretEl.offsetLeft : 0
+      if (!el.dataset.inspectComposing && (caretX > 1 || row.scrollWidth > row.clientWidth + 2)) {
+        padCaretTextarea(el, caretX, row.scrollWidth)
+      }
+      if (el.scrollLeft !== row.scrollLeft) el.scrollLeft = row.scrollLeft
+    }
+    row.addEventListener('scroll', sync, { passive: true })
+    return () => row.removeEventListener('scroll', sync)
+  }, [rich])
 
   return (
     <div className="pointer-events-none absolute inset-0" data-inspect-ui>
@@ -113,7 +237,8 @@ export default function DeviceFrame({
       <div
         aria-hidden={fullscreen ? 'true' : undefined}
         className={
-          'pointer-events-none absolute inset-x-0 top-[50px] z-30 flex items-center justify-center gap-3 px-4' +
+          'pointer-events-none absolute inset-x-0 top-[50px] z-30 flex items-center px-4 ' +
+          (selectMode ? 'justify-start' : 'justify-center gap-3') +
           (fullscreen ? ' [&_button]:!pointer-events-none' : '')
         }
         style={{
@@ -122,29 +247,47 @@ export default function DeviceFrame({
           transition: `opacity ${topMotion}, transform ${topMotion}`,
         }}
       >
-        <CircleButton label="返回" locked={fullscreen}>
+        <CircleButton
+          label="返回"
+          locked={fullscreen}
+          onClick={selectMode ? onExitSelect : undefined}
+        >
           <ChevronLeftIcon />
         </CircleButton>
-        <CircleButton label="对话" locked={fullscreen}>
-          <ChatIcon />
-        </CircleButton>
-        <button
-          type="button"
-          aria-pressed="true"
-          data-inspect-ui
-          data-inspect-chrome
-          className={`flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-full px-4 text-[15px] font-medium tracking-[-0.01em] text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS}`}
-          style={{ pointerEvents: fullscreen ? 'none' : 'auto' }}
-        >
-          <PhoneIcon />
-          Preview
-        </button>
-        <CircleButton label="桌面预览" locked={fullscreen}>
-          <MonitorIcon />
-        </CircleButton>
-        <CircleButton label="工具" locked={fullscreen}>
-          <WrenchIcon />
-        </CircleButton>
+        {selectMode ? (
+          <>
+            {/* 选择态标题用细字重，颜色和位置不动 */}
+            <p
+              data-select-title=""
+              className="pointer-events-none absolute left-16 right-16 top-1/2 -translate-y-1/2 text-center text-[15px] font-light tracking-[-0.01em] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]"
+            >
+              {selectMode === 'solo' ? '选择元素, 松开发送' : '选择元素'}
+            </p>
+          </>
+        ) : (
+          <>
+            <CircleButton label="对话" locked={fullscreen}>
+              <ChatIcon />
+            </CircleButton>
+            <button
+              type="button"
+              aria-pressed="true"
+              data-inspect-ui
+              data-inspect-chrome
+              className={`flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-full px-4 text-[15px] font-medium tracking-[-0.01em] text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS}`}
+              style={{ pointerEvents: fullscreen ? 'none' : 'auto' }}
+            >
+              <PhoneIcon />
+              Preview
+            </button>
+            <CircleButton label="桌面预览" locked={fullscreen}>
+              <MonitorIcon />
+            </CircleButton>
+            <CircleButton label="工具" locked={fullscreen}>
+              <WrenchIcon />
+            </CircleButton>
+          </>
+        )}
       </div>
 
       {/* 底栏按钮同样浮在遮罩上，整条灰底不再挡住遮罩 */}
@@ -204,7 +347,7 @@ export default function DeviceFrame({
           <div
             className={
               `flex h-12 min-w-0 items-center rounded-full shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS} ` +
-              (dictating ? 'px-4' : 'pl-3 pr-1.5')
+              (dictating ? 'px-4' : 'pl-1.5 pr-1.5')
             }
             data-inspect-ui
             data-inspect-chrome
@@ -215,7 +358,7 @@ export default function DeviceFrame({
                 type="button"
                 aria-label="添加"
                 data-inspect-chrome
-                className="flex h-8 w-8 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-[#8a8a8e]"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-0 bg-transparent p-0 text-[#8a8a8e] hover:bg-black/5 active:bg-black/8"
               >
                 <PlusIcon />
               </button>
@@ -236,9 +379,12 @@ export default function DeviceFrame({
                 }}
                 style={{ height: 24, minHeight: 24, maxHeight: 24 }}
                 className={
-                  'box-border block h-6 w-full min-w-0 resize-none overflow-x-auto overflow-y-hidden whitespace-nowrap border-0 bg-transparent px-0 py-0 text-[15px] leading-6 text-[#1c1c1e] outline-none placeholder:text-[#b1b1b6]' +
-                  (dictating ? ' pointer-events-none' : '')
+                  'box-border block h-6 w-full min-w-0 resize-none overflow-hidden whitespace-nowrap border-0 bg-transparent px-0 py-0 text-[15px] leading-6 outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden placeholder:text-[#b1b1b6] ' +
+                  (rich ? 'text-transparent caret-transparent ' : 'text-[#1c1c1e] ') +
+                  (dictating ? 'pointer-events-none' : '')
                 }
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
                 onPointerDown={(e) => {
                   if (e.button !== 0) return
                   // 听写中不把焦点送进这条框，避免组词写进多选草稿
@@ -251,24 +397,60 @@ export default function DeviceFrame({
                     e.preventDefault()
                     return
                   }
-                  // 长按听写还没成立前不 preventDefault，桌面拼音才能组词
-                  if (running || !text) return
-                  if (barHoldEnabled) return
-                  onActivate?.()
+                  // 执行中不展开。长按成立前不 preventDefault，桌面拼音和听写计时都还能走
+                  if (running) return
+                  pendingExpandRef.current = true
+                  panRef.current = {
+                    id: e.pointerId,
+                    x: e.clientX,
+                    y: e.clientY,
+                    left: rowRef.current?.scrollLeft || 0,
+                    scrolling: false,
+                    locked: false,
+                  }
                 }}
-                onPointerUp={(e) => {
-                  if (e.button !== 0) return
-                  // 短按：有草稿才打开键盘。长按已经成立、或空框，都不从这里进听写
-                  if (!showInput || !barHoldEnabled || running || dictating || !text) return
-                  if (e.currentTarget.dataset.inspectHold === 'armed') return
-                  onActivate?.()
+                onPointerMove={(e) => {
+                  const pan = panRef.current
+                  if (!pan || pan.id !== e.pointerId) return
+                  const row = rowRef.current
+                  if (!row) return
+                  const dx = e.clientX - pan.x
+                  const dy = e.clientY - pan.y
+                  if (!pan.scrolling) {
+                    if (Math.abs(dx) < 6) return
+                    if (Math.abs(dy) > Math.abs(dx)) {
+                      pan.locked = true
+                      return
+                    }
+                    pan.scrolling = true
+                  }
+                  if (pan.locked) return
+                  row.scrollLeft = pan.left - dx
+                }}
+                onPointerCancel={() => {
+                  pendingExpandRef.current = false
+                  panRef.current = null
                 }}
               />
               {running && !dictating ? <AgentPhrase /> : null}
+              {rich ? (
+                <div className="pointer-events-none absolute inset-0">
+                  <BarDraftLine
+                    ref={rowRef}
+                    segments={segments}
+                    cursor={cursor}
+                    showCaret={focused}
+                    composeRef={composeRef}
+                    armedN={armedN}
+                    onTagPress={onTagPress}
+                  />
+                </div>
+              ) : null}
               {dictating ? (
                 <div className="absolute inset-0">
                   <SoloScrollLine
                     prefix={solo.prefix}
+                    segments={solo.segments}
                     label={solo.label}
                     summary={solo.summary}
                     speech={solo.speech}
@@ -322,7 +504,7 @@ export default function DeviceFrame({
   )
 }
 
-function CircleButton({ label, children, bare = false, locked = false }) {
+function CircleButton({ label, children, bare = false, locked = false, onClick }) {
   return (
     <button
       type="button"
@@ -330,6 +512,7 @@ function CircleButton({ label, children, bare = false, locked = false }) {
       data-inspect-ui
       data-inspect-chrome
       tabIndex={locked ? -1 : undefined}
+      onClick={onClick}
       style={{ pointerEvents: locked ? 'none' : 'auto' }}
       className={
         bare
@@ -384,7 +567,7 @@ function ChevronLeftIcon() {
 
 function ChatIcon() {
   return (
-    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true" opacity="0.48">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true" opacity="0.9">
       <path
         fill="currentColor"
         fillRule="evenodd"
@@ -408,7 +591,7 @@ function PhoneIcon() {
 
 function MonitorIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" opacity="0.48">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" opacity="0.9">
       <path
         fill="currentColor"
         fillRule="evenodd"
@@ -420,7 +603,7 @@ function MonitorIcon() {
 
 function WrenchIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" opacity="0.48">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true" opacity="0.9">
       <path d="M17.9355 6.66283C17.9355 9.2027 15.8766 11.2617 13.3367 11.2617C12.9176 11.2617 12.5116 11.2056 12.1258 11.1006C11.976 11.0598 11.6861 10.9566 11.6861 10.9566L7.70437 16.2363C6.6753 17.6008 4.6773 17.7401 3.4688 16.5316C2.26046 15.3233 2.39958 13.3256 3.76373 12.2964L9.04293 8.31344C9.04293 8.31344 8.93968 8.02347 8.89892 7.87373C8.79389 7.48791 8.73782 7.08191 8.73782 6.66283C8.73782 4.12294 10.7968 2.06396 13.3367 2.06396C14.1134 2.06396 14.8451 2.25652 15.4868 2.59651L13.5283 4.55501C12.9992 5.08416 12.9992 5.94206 13.5283 6.4712C14.0574 7.00035 14.9154 7.00035 15.4445 6.4712L17.403 4.5127C17.743 5.15436 17.9355 5.88612 17.9355 6.66283Z" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
@@ -428,9 +611,9 @@ function WrenchIcon() {
 
 function ExitFullscreenIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path d="M9.44043 3.70264V8.22831C9.44043 8.89775 8.89775 9.44043 8.22831 9.44043H3.70264" stroke="black" strokeOpacity="0.9" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M10.5596 16.2974V11.7717C10.5596 11.1023 11.1023 10.5596 11.7717 10.5596H16.2974" stroke="black" strokeOpacity="0.9" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M13.3975 3C12.9833 3 12.6475 3.3358 12.6475 3.75V7.86765C12.6475 9.52451 13.9906 10.8677 15.6475 10.8677H20.2504C20.6646 10.8677 21.0004 10.5319 21.0004 10.1177C21.0004 9.70343 20.6646 9.36765 20.2504 9.36765H15.6475C14.8191 9.36765 14.1475 8.69607 14.1475 7.86765V3.75C14.1475 3.3358 13.8117 3 13.3975 3Z" fill="black" fillOpacity="0.6" />
+      <path d="M8.35295 14.6323C9.18138 14.6323 9.85295 15.3039 9.85295 16.1323V20.25C9.85295 20.6642 10.1887 21 10.603 21C11.0172 21 11.353 20.6642 11.353 20.25V16.1323C11.353 14.4754 10.0098 13.1323 8.35295 13.1323H3.75C3.3358 13.1323 3 13.4681 3 13.8823C3 14.2965 3.3358 14.6323 3.75 14.6323H8.35295Z" fill="black" fillOpacity="0.6" />
     </svg>
   )
 }
@@ -446,17 +629,37 @@ function FullscreenIcon() {
 
 function PlusIcon() {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-      <path d="M9 3.6v10.8M3.6 9h10.8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    // 跟 Preview 手机图标一样：#1c1c1e，不透明度 0.9
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true" opacity="0.9">
+      <path d="M9 3.6v10.8M3.6 9h10.8" stroke="#1c1c1e" strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   )
 }
 
 function MicIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <rect x="6" y="1.6" width="4" height="7.2" rx="2" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M4 7.4a4 4 0 0 0 8 0M8 11.4V14" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    // 只换麦形。描边用 currentColor（圆钮上的白），不填实，避免黑块贴在深色圆上
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" opacity="0.92">
+      <rect
+        x="5.23633"
+        y="1.4541"
+        width="5.52727"
+        height="8.36364"
+        rx="2.76364"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M8.00005 12.468L8.00003 14.5454M8.00005 12.468C10.3065 12.468 12.293 11.0983 13.1905 9.12793M8.00005 12.468C5.69362 12.468 3.70711 11.0983 2.80957 9.12793"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }

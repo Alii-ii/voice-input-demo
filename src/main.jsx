@@ -4,6 +4,7 @@ import App from './App.jsx'
 import ChatLab from './chat/ChatLab.jsx'
 import InspectLab from './inspect/InspectLab.jsx'
 import { cn } from './lib/cn.js'
+import { useMobileStage } from './lib/useMobileStage.js'
 import './index.css'
 
 /**
@@ -27,6 +28,8 @@ function keyFromHash() {
 
 function Root() {
   const [tab, setTab] = useState(keyFromHash)
+  // 移动端打开点选 demo 时藏掉外层切换条；手机壳内不进全屏态。换 demo 仍走 hash
+  const mobileStage = useMobileStage()
 
   // 首次加载无 hash → 补上默认路由，让分享出去的 URL 永远显式带页面定位
   useEffect(() => {
@@ -56,7 +59,12 @@ function Root() {
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       {/* 窄屏顶栏横向滚动，tab 不换行、不挤扁 */}
-      <div className="flex min-w-0 shrink-0 flex-nowrap gap-1.5 overflow-x-auto border-b border-[#3a3a3c] bg-[rgba(28,28,30,0.7)] px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div
+        className={cn(
+          'flex min-w-0 shrink-0 flex-nowrap gap-1.5 overflow-x-auto border-b border-[#3a3a3c] bg-[rgba(28,28,30,0.7)] px-4 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+          mobileStage && tab === 'inspect' && 'hidden',
+        )}
+      >
         {ROUTES.map((r) => (
           <button
             key={r.key}

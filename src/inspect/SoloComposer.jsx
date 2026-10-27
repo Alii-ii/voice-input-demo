@@ -1,42 +1,52 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import ElementTagChip from './ElementTagChip.jsx'
+import ScrollFadeLine from './ScrollFadeLine.jsx'
 
 const BARS = 56
 
 /**
  * 听写态胶囊里的单行。textarea 画不出彩色标签，所以用同一行高的横滚层：
- * 已有文字、蓝色链接 + 元素名、听写文本。超出只横滚，不换行、不撑高。
+ * 已有文字、元素芯片、听写文本。超出只横滚，不换行、不撑高。
+ * 左右淡出贴在这一行，不盖住下面的波形。
  */
-export function SoloScrollLine({ prefix = '', label = '', summary = '', speech = '' }) {
-  const rowRef = useRef(null)
-
-  // 新识别接在末尾，把末尾留在胶囊里
-  useLayoutEffect(() => {
-    const row = rowRef.current
-    if (!row) return
-    row.scrollLeft = row.scrollWidth
-  }, [prefix, label, speech])
+export function SoloScrollLine({ prefix = '', segments = null, label = '', summary = '', speech = '' }) {
+  const lead = Array.isArray(segments)
+  const hasLead = lead
+    ? segments.some((seg) => (seg.type === 'tag' ? true : !!seg.value))
+    : !!prefix
+  const scrollKey = lead
+    ? `${segments.map((seg) => (seg.type === 'tag' ? `t${seg.n}` : seg.value)).join('\n')}|${label}|${speech}`
+    : `${prefix}|${label}|${speech}`
 
   return (
-    <div
-      ref={rowRef}
-      className="flex h-6 items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-    >
-      <div className="inline-flex h-6 items-center whitespace-nowrap text-[15px] leading-6 text-[#1c1c1e]">
-        {prefix ? <span>{prefix}</span> : null}
+    <ScrollFadeLine pinEnd enter scrollKey={scrollKey}>
+      <div className="inline-flex w-max shrink-0 items-center whitespace-nowrap text-[15px] leading-none text-[#1c1c1e]">
+        {lead
+          ? segments.map((seg, index) =>
+              seg.type === 'tag' ? (
+                <ElementTagChip
+                  key={`tag-${seg.n}`}
+                  label={seg.label || `选区${seg.n}`}
+                  summary={seg.summary}
+                  className="mr-1"
+                />
+              ) : (
+                <span key={`text-${index}`}>{seg.value}</span>
+              ),
+            )
+          : prefix
+            ? <span>{prefix}</span>
+            : null}
         {label ? (
-          <span
-            title={summary || undefined}
-            className={
-              'inline-flex shrink-0 items-center gap-[3px] text-[#2f7fff] ' + (prefix ? 'mx-1' : 'mr-1')
-            }
-          >
-            <LinkIcon />
-            <span>{label}</span>
-          </span>
+          <ElementTagChip
+            label={label}
+            summary={summary}
+            className={hasLead ? 'mx-1' : 'mr-1'}
+          />
         ) : null}
-        {speech ? <span>{!label && prefix ? ` ${speech}` : speech}</span> : null}
+        {speech ? <span>{!label && hasLead ? ` ${speech}` : speech}</span> : null}
       </div>
-    </div>
+    </ScrollFadeLine>
   )
 }
 
@@ -81,24 +91,5 @@ export function SoloWave() {
         />
       ))}
     </div>
-  )
-}
-
-function LinkIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M6.6 9.2a2.7 2.7 0 0 0 3.9.2l1.5-1.5a2.7 2.7 0 0 0-3.8-3.8L7.4 4.9"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <path
-        d="M9.4 6.8a2.7 2.7 0 0 0-3.9-.2L4 8.1a2.7 2.7 0 0 0 3.8 3.8l.8-.8"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
   )
 }

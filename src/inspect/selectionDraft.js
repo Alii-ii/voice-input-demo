@@ -83,6 +83,39 @@ export function backspace(draft) {
   }
 }
 
+/**
+ * 删掉序号为 n 的标签，并把后面的序号减一。
+ * 左右文本并回同一段，光标留在合并后的文本里。
+ */
+export function removeTag(draft, n) {
+  const { segments, cursor } = draft
+  const tagIndex = segments.findIndex((seg) => seg.type === 'tag' && seg.n === n)
+  if (tagIndex < 1) return draft
+  const before = segments[tagIndex - 1]
+  const after = segments[tagIndex + 1]
+  if (!before || before.type !== 'text' || !after || after.type !== 'text') return draft
+  const merged = { type: 'text', value: before.value + after.value }
+  const next = [
+    ...segments.slice(0, tagIndex - 1),
+    merged,
+    ...segments.slice(tagIndex + 2),
+  ].map((seg) => (seg.type === 'tag' && seg.n > n ? { ...seg, n: seg.n - 1 } : seg))
+  let i = cursor.i
+  let offset = cursor.offset || 0
+  if (i === tagIndex + 1) {
+    i = tagIndex - 1
+    offset = before.value.length + offset
+  } else if (i > tagIndex + 1) {
+    i -= 2
+  }
+  if (!next[i] || next[i].type !== 'text') {
+    i = 0
+    offset = 0
+  }
+  offset = Math.min(offset, next[i].value.length)
+  return { segments: next, cursor: { i, offset } }
+}
+
 /** 左右移动。标签算一步，光标从标签一侧跳到另一侧 */
 export function moveCursor(draft, delta) {
   let { i, offset } = draft.cursor

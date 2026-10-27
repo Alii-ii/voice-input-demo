@@ -5,8 +5,10 @@ import ElementPicker from './ElementPicker.jsx'
 import { expandDuration, sideDuration, usePreviewFullscreen } from './previewFullscreen.js'
 import SelectionEditor from './SelectionEditor.jsx'
 import StudyRoomPage from './StudyRoomPage.jsx'
-import { backspace, createDraft, insertTag, insertText, moveCursor, plainCaret, plainText } from './selectionDraft.js'
+import { backspace, createDraft, insertTag, insertText, moveCursor, plainCaret, plainText, removeTag } from './selectionDraft.js'
 import { appendSoloSpeech, createSoloDraft, formatSoloMessage, replaceSoloTag } from './soloDraft.js'
+import { cn } from '../lib/cn.js'
+import { useMobileStage } from '../lib/useMobileStage.js'
 
 /** 发出后若没点停止，大约 5 秒回到空闲底栏 */
 const AGENT_RUN_MS = 5000
@@ -24,12 +26,16 @@ export default function InspectLab() {
   const [resetEpoch, setResetEpoch] = useState(0)
   const [running, setRunning] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [armedN, setArmedN] = useState(null)
   const runTimerRef = useRef(0)
   const { phase, entering, fullscreen, toggle, syncInput } = usePreviewFullscreen()
+  // 窄屏或粗指针放不下说明时，整台手机铺满视口。不调用全屏 toggle，phase 仍由产品按钮决定
+  const mobileStage = useMobileStage()
   // 全屏输入框只跟正在点选走：多选（picking）或单选听写（soloDraft）。
   // 退出点选后即使选区还在，以及 running 为真，都不 syncInput(true)。
   // 非全屏 phase 是 off，syncInput 不会改显示，底栏输入框始终在。
   const showBar = picking || !!soloDraft
+  const selectMode = soloDraft ? 'solo' : picking ? 'multi' : null
 
   useEffect(() => {
     syncInput(showBar)
@@ -58,8 +64,13 @@ export default function InspectLab() {
   const draftRef = useRef(draft)
   const soloRef = useRef(null)
   const stopSoloRef = useRef(null)
+  const armedRef = useRef(null)
+  const pickingRef = useRef(false)
+  const exitSelectRef = useRef(null)
   regionsRef.current = regions
   draftRef.current = draft
+  armedRef.current = armedN
+  pickingRef.current = picking
 
   const addSelection = (info) => {
     if (regionsRef.current.some((region) => region.el === info.el)) return
@@ -93,6 +104,10 @@ export default function InspectLab() {
       const nextRegions = regionsRef.current.filter((region) => region.n !== removed)
       regionsRef.current = nextRegions
       setRegions(nextRegions)
+      if (armedRef.current === removed) {
+        armedRef.current = null
+        setArmedN(null)
+      }
       if (nextRegions.length === 0) {
         const empty = createDraft()
         draftRef.current = empty
@@ -108,6 +123,49 @@ export default function InspectLab() {
   const stopSoloDictation = () => {
     stopSoloRef.current?.()
     stopSoloRef.current = null
+  }
+
+  // 删掉一个多选，后面的序号跟着往前补
+  const removeSelection = (n) => {
+    const nextRegions = regionsRef.current
+      .filter((region) => region.n !== n)
+      .map((region) => (region.n > n ? { ...region, n: region.n - 1 } : region))
+    const nextDraft = removeTag(draftRef.current, n)
+    regionsRef.current = nextRegions
+    draftRef.current = nextDraft
+    setRegions(nextRegions)
+    setDraft(nextDraft)
+    const armed = armedRef.current
+    const nextArmed = armed == null ? null : armed === n ? null : armed > n ? armed - 1 : armed
+    armedRef.current = nextArmed
+    setArmedN(nextArmed)
+  }
+
+  // 多选里点一次标签进入删除态，再点一次才真正删
+  const onTagPress = (n) => {
+    if (soloRef.current || !pickingRef.current) return
+    if (armedRef.current === n) {
+      removeSelection(n)
+      return
+    }
+    armedRef.current = n
+    setArmedN(n)
+  }
+
+  // 放弃已插入的选区并退出。不发送，单选也不走松开发送
+  const discardSelections = () => {
+    stopSoloDictation()
+    soloRef.current = null
+    setSoloDraft(null)
+    const empty = createDraft()
+    regionsRef.current = []
+    draftRef.current = empty
+    setRegions([])
+    setDraft(empty)
+    setEditing(false)
+    armedRef.current = null
+    setArmedN(null)
+    exitSelectRef.current?.()
   }
 
   // 单选用临时草稿，不改多选的 regions / draft
@@ -180,7 +238,14 @@ export default function InspectLab() {
         ref={phoneRef}
         data-fs-phase={phase}
         data-fs-entering={entering ? '1' : '0'}
-        className="relative h-[min(844px,100%)] w-[390px] max-w-full shrink-0 overflow-hidden rounded-[40px] bg-[#e8e9eb] shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
+        className={cn(
+          'shrink-0 overflow-hidden bg-[#e8e9eb]',
+          // 移动端不要和 relative 同时写：Tailwind 里后出现的 position 会盖住 fixed
+          // 只去掉浮在深色页面上的圆角阴影和 390 居中，壳内仍是普通布局
+          mobileStage
+            ? 'fixed inset-0 z-10 rounded-none shadow-none'
+            : 'relative h-[min(844px,100%)] w-[390px] max-w-full rounded-[40px] shadow-[0_24px_70px_rgba(0,0,0,0.45)]',
+        )}
       >
         <div
           className="h-full"
@@ -221,14 +286,24 @@ export default function InspectLab() {
           edgeDock={phase === 'dock'}
           sideMotion={sideDuration(phase)}
           onPickingChange={setPicking}
+          onDiscard={discardSelections}
+          deletingN={selectMode === 'multi' ? armedN : null}
+          onDeleteSelection={() => {
+            if (armedRef.current != null) removeSelection(armedRef.current)
+          }}
+          onBadgePress={selectMode === 'multi' ? onTagPress : undefined}
+          exitSelectRef={exitSelectRef}
         />
         <DeviceFrame
           fabSlotRef={fabSlotRef}
           text={plainText(draft.segments)}
           caret={plainCaret(draft.segments, draft.cursor)}
+          segments={draft.segments}
+          cursor={draft.cursor}
           running={running}
           onActivate={() => {
-            if (regionsRef.current.length > 0) setEditing(true)
+            // 空胶囊短按也进入键盘，不要求已经有选区
+            setEditing(true)
           }}
           onStop={stopRunning}
           onInsert={onInsert}
@@ -236,10 +311,15 @@ export default function InspectLab() {
           fsEntering={entering}
           onToggleFullscreen={toggle}
           barHoldEnabled={!running && !editing && !picking && !soloDraft}
+          selectMode={selectMode}
+          onExitSelect={discardSelections}
+          armedN={selectMode === 'multi' ? armedN : null}
+          onTagPress={selectMode === 'multi' ? onTagPress : undefined}
           solo={
             soloDraft
               ? {
                   prefix: plainText(draft.segments),
+                  segments: draft.segments,
                   label: soloDraft.tag?.text || '',
                   summary: soloDraft.tag?.summary || '',
                   speech: soloDraft.speech || '',
@@ -262,6 +342,8 @@ export default function InspectLab() {
             onMove={onMove}
             onRestore={onRestore}
             onSend={onSend}
+            armedN={selectMode === 'multi' ? armedN : null}
+            onTagPress={selectMode === 'multi' ? onTagPress : undefined}
           />
         ) : null}
       </div>

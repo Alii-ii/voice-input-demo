@@ -1,32 +1,72 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { cn } from '../lib/cn.js'
+import DraftCaret from './DraftCaret.jsx'
+import ElementTagChip from './ElementTagChip.jsx'
+import { padCaretTextarea } from './syncImeScroll.js'
 import { plainText } from './selectionDraft.js'
 
 /**
  * 一行高的输入条。底层是不会长高的 textarea，上层画出标签和已输入文本。
  * 不聚焦这枚 textarea，避免系统键盘盖住模拟键盘。
  */
-export default function SelectionField({ segments, cursor, showCaret, framed, onActivate }) {
+export default function SelectionField({
+  segments,
+  cursor,
+  showCaret,
+  framed,
+  flush = false,
+  onActivate,
+  scrollerRef,
+  scrollSyncRef,
+  armedN = null,
+  onTagPress,
+}) {
   const rowRef = useRef(null)
   const caretRef = useRef(null)
   const text = plainText(segments)
 
+  const setRow = (node) => {
+    rowRef.current = node
+    if (scrollerRef) scrollerRef.current = node
+  }
+
+  // 拼音框跟着可视行滚，两边 scrollLeft 用同一套，不用 padding 去凑光标
+  const syncIme = (row) => {
+    const ime = scrollSyncRef?.current
+    if (!ime || !row || ime.dataset.inspectComposing === '1') return
+    const caret = caretRef.current
+    const caretX = caret ? caret.offsetLeft : 0
+    if (caretX > 1 || row.scrollWidth > row.clientWidth + 2) {
+      padCaretTextarea(ime, caretX, row.scrollWidth)
+    }
+    if (ime.scrollLeft !== row.scrollLeft) ime.scrollLeft = row.scrollLeft
+  }
+
   // 内容超出一行时，把光标或末尾滚进可视区，高度始终锁在一行
-  useEffect(() => {
+  useLayoutEffect(() => {
     const row = rowRef.current
     if (!row) return
     const caret = caretRef.current
     if (!caret) {
       row.scrollLeft = row.scrollWidth
-      return
+    } else {
+      const left = caret.offsetLeft
+      const right = left + caret.offsetWidth
+      if (left < row.scrollLeft + 8) row.scrollLeft = Math.max(0, left - 8)
+      else if (right > row.scrollLeft + row.clientWidth - 8) {
+        row.scrollLeft = right - row.clientWidth + 8
+      }
     }
-    const left = caret.offsetLeft
-    const right = left + caret.offsetWidth
-    if (left < row.scrollLeft + 8) row.scrollLeft = Math.max(0, left - 8)
-    else if (right > row.scrollLeft + row.clientWidth - 8) {
-      row.scrollLeft = right - row.clientWidth + 8
-    }
-  }, [segments, cursor, showCaret])
+    syncIme(row)
+  }, [segments, cursor, showCaret, scrollSyncRef])
+
+  useEffect(() => {
+    const row = rowRef.current
+    if (!row) return undefined
+    const onScroll = () => syncIme(row)
+    row.addEventListener('scroll', onScroll, { passive: true })
+    return () => row.removeEventListener('scroll', onScroll)
+  }, [scrollSyncRef, segments, cursor])
 
   return (
     <div
@@ -47,41 +87,44 @@ export default function SelectionField({ segments, cursor, showCaret, framed, on
           e.stopPropagation()
           onActivate?.()
         }}
-        style={{ height: 40, minHeight: 40, maxHeight: 40 }}
         className={cn(
-          'box-border block w-full resize-none overflow-hidden border-0 px-3.5 py-0 text-[16px] leading-10 text-transparent outline-none',
+          // 行高 1、高度跟字号齐，行盒不要高出字形再留一截空
+          'box-border block h-4 min-h-4 max-h-4 w-full resize-none overflow-hidden border-0 text-[16px] leading-none text-transparent outline-none',
+          // 展开态外层卡片已有内边距，这里贴齐拼音框，不再加一层 px-3.5
+          flush ? 'p-0' : 'px-3.5 py-0',
           framed ? 'rounded-[22px] bg-white' : 'bg-transparent',
         )}
       />
       <div
-        ref={rowRef}
-        className="pointer-events-none absolute inset-0 flex items-center overflow-x-auto overflow-y-hidden px-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        ref={setRow}
+        className={cn(
+          // 整行不接点击，拼音仍落在 textarea；芯片 z 层更高，只有它自己可点
+          'pointer-events-none absolute inset-0 z-20 flex items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+          flush ? 'p-0' : 'px-3.5',
+        )}
       >
-        <div className="inline-flex items-center whitespace-nowrap text-[16px] leading-10 text-[#1c1c1e]">
+        <div className="pointer-events-none inline-flex items-center gap-px whitespace-nowrap text-[16px] leading-none text-[#1c1c1e]">
           {segments.map((seg, index) => {
             if (seg.type === 'tag') {
               return (
-                <span
+                <ElementTagChip
                   key={`tag-${seg.n}`}
-                  title={seg.summary}
-                  className="mr-1 inline-flex shrink-0 items-center gap-[3px] text-[#2f7fff]"
-                >
-                  <TagIcon />
-                  <span>{seg.label || `选区${seg.n}`}</span>
-                </span>
+                  n={seg.n}
+                  label={seg.label || `选区${seg.n}`}
+                  summary={seg.summary}
+                  armed={armedN === seg.n}
+                  onPress={onTagPress ? () => onTagPress(seg.n) : undefined}
+                />
               )
             }
             const active = showCaret && cursor.i === index
             if (!active) {
-              return <span key={`text-${index}`}>{seg.value}</span>
+              return <span key={`text-${index}`} className="pointer-events-none">{seg.value}</span>
             }
             return (
-              <span key={`text-${index}`}>
+              <span key={`text-${index}`} className="pointer-events-none">
                 {seg.value.slice(0, cursor.offset)}
-                <span
-                  ref={caretRef}
-                  className="caret-blink mx-px inline-block h-[18px] w-px translate-y-[2px] bg-[#1c1c1e] align-middle"
-                />
+                <DraftCaret markerRef={caretRef} />
                 {seg.value.slice(cursor.offset)}
               </span>
             )
@@ -89,24 +132,5 @@ export default function SelectionField({ segments, cursor, showCaret, framed, on
         </div>
       </div>
     </div>
-  )
-}
-
-function TagIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M6.6 9.2a2.7 2.7 0 0 0 3.9.2l1.5-1.5a2.7 2.7 0 0 0-3.8-3.8L7.4 4.9"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-      <path
-        d="M9.4 6.8a2.7 2.7 0 0 0-3.9-.2L4 8.1a2.7 2.7 0 0 0 3.8 3.8l.8-.8"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
   )
 }

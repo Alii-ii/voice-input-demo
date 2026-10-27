@@ -20,6 +20,8 @@ export default function SelectionEditor({
   onMove,
   onRestore,
   onSend,
+  armedN = null,
+  onTagPress,
 }) {
   const onCollapseRef = useRef(onCollapse)
   const onInsertRef = useRef(onInsert)
@@ -35,6 +37,7 @@ export default function SelectionEditor({
   const keepVoiceRef = useRef(voice.keepAndExit)
   const undoVoiceRef = useRef(voice.undoAndExit)
   const imeRef = useRef(null)
+  const rowRef = useRef(null)
   voiceModeRef.current = voice.mode
   keepVoiceRef.current = voice.keepAndExit
   undoVoiceRef.current = voice.undoAndExit
@@ -46,17 +49,36 @@ export default function SelectionEditor({
     return undefined
   }, [expanded])
 
+  // 拼音框盖在草稿上面，滚轮要推可视行，再由可视行把 scrollLeft 同步回来
+  useEffect(() => {
+    if (!expanded) return undefined
+    const el = imeRef.current
+    if (!el) return undefined
+    const onWheel = (e) => {
+      const row = rowRef.current
+      if (!row || row.scrollWidth - row.clientWidth <= 2) return
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+      if (!delta) return
+      row.scrollLeft += delta
+      e.preventDefault()
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [expanded])
+
   // 只有键盘修改态接收实体按键；收起后页面点选继续用同一份草稿。
   // 组词中不 preventDefault、不逐字母插入；上屏整段走 compositionend。
   useEffect(() => {
     if (!expanded) return undefined
     let composing = false
     const imeKey = (e) => composing || e.isComposing || e.keyCode === 229 || e.key === 'Process'
-    const onCompositionStart = () => {
+    const onCompositionStart = (e) => {
       composing = true
+      if (e.target === imeRef.current) imeRef.current.dataset.inspectComposing = '1'
     }
     const onCompositionEnd = (e) => {
       composing = false
+      if (e.target === imeRef.current) delete imeRef.current.dataset.inspectComposing
       const target = e.target
       // 底栏那条真实输入自己写入草稿，避免同一段中文插两次
       if (target instanceof Element && target.dataset.inspectIme === 'bar') return
@@ -122,7 +144,14 @@ export default function SelectionEditor({
   if (!expanded) {
     return (
       <div className="absolute inset-x-0 bottom-0 z-40 px-3 pb-[14px]" data-inspect-ui data-inspect-chrome>
-        <SelectionField segments={segments} cursor={cursor} framed onActivate={onActivate} />
+        <SelectionField
+          segments={segments}
+          cursor={cursor}
+          framed
+          onActivate={onActivate}
+          armedN={armedN}
+          onTagPress={onTagPress}
+        />
       </div>
     )
   }
@@ -137,8 +166,17 @@ export default function SelectionEditor({
       <div className="px-3 pb-2">
         <div className="rounded-[22px] bg-white px-3.5 pb-2.5 pt-3 shadow-[0_10px_30px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.04]">
           <div className="relative">
-            <SelectionField segments={segments} cursor={cursor} showCaret />
-            {/* 只接输入法，不另画一行；文字仍由上方草稿展示 */}
+            <SelectionField
+              segments={segments}
+              cursor={cursor}
+              showCaret
+              flush
+              scrollerRef={rowRef}
+              scrollSyncRef={imeRef}
+              armedN={armedN}
+              onTagPress={onTagPress}
+            />
+            {/* 只接输入法，不另画一行；文字仍由上方草稿展示。这块区域本身不要内边距，行高跟字形齐，避免把字压到下半截 */}
             <textarea
               ref={imeRef}
               rows={1}
@@ -147,8 +185,7 @@ export default function SelectionEditor({
               aria-label="拼音输入"
               autoComplete="off"
               spellCheck={false}
-              style={{ height: 40, minHeight: 40, maxHeight: 40 }}
-              className="absolute inset-0 z-10 box-border block w-full resize-none overflow-hidden whitespace-nowrap border-0 bg-transparent px-3.5 py-0 text-[16px] leading-10 text-transparent caret-transparent outline-none"
+              className="absolute inset-0 z-10 box-border block w-full resize-none overflow-hidden whitespace-nowrap border-0 bg-transparent p-0 text-[16px] leading-none text-transparent caret-transparent outline-none"
             />
           </div>
 

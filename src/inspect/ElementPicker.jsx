@@ -1,20 +1,30 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import { cn } from '../lib/cn.js'
 import { createBarHold, markBarHold } from './barHold.js'
 import { INSPECT_GLASS_CLASS } from './glassChrome.js'
 import { describeElement, pickElement, readRadius } from './pickElement.js'
-import { FS_EDGE_NUDGE, FS_TWO_FINGER_MS } from './previewFullscreen.js'
+import { FS_DOCK_MS, FS_EDGE_NUDGE, FS_ENTER_MS, FS_TWO_FINGER_MS } from './previewFullscreen.js'
 import { pointOnInspectChrome, resolveTwoFingerPoint } from './twoFingerPick.js'
 
 /** 与悬浮按钮同尺寸，未吸附时选框保持这个大小 */
 const BUTTON = 48
 
-const SNAP_TRANSITION =
-  'top 180ms cubic-bezier(.2,.8,.2,1), left 180ms cubic-bezier(.2,.8,.2,1), width 180ms cubic-bezier(.2,.8,.2,1), height 180ms cubic-bezier(.2,.8,.2,1), border-radius 180ms cubic-bezier(.2,.8,.2,1)'
-
-const FREE_TRANSITION =
-  'top 36ms linear, left 36ms linear, width 150ms cubic-bezier(.2,.8,.2,1), height 150ms cubic-bezier(.2,.8,.2,1), border-radius 150ms cubic-bezier(.2,.8,.2,1)'
+/** 跟手框和已选框的虚线。线宽 0.5，和遮罩洞共用同一组坐标 */
+const FRAME_STROKE = 'rgba(26, 140, 255, 0.95)'
+const FRAME_DASH = '3 2'
+function DiscardIcon() {
+  return (
+    // 多选放弃。只画这一条 path，不用 clipPath，避免 id 和别的图标撞上
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="M15.5999 3.51655C15.7171 3.39934 15.8761 3.3335 16.0418 3.3335C16.387 3.3335 16.6668 3.61332 16.6668 3.9585C16.6668 4.12425 16.601 4.28323 16.4837 4.40057L10.884 10.0002L16.4838 15.5999C16.601 15.7171 16.6668 15.8761 16.6668 16.0418C16.6668 16.387 16.387 16.6668 16.0418 16.6668C15.8761 16.6668 15.7171 16.601 15.5999 16.4838L10.0002 10.884L4.40044 16.4838C4.28323 16.601 4.12425 16.6668 3.9585 16.6668C3.61332 16.6668 3.3335 16.387 3.3335 16.0418C3.3335 15.8761 3.39935 15.7171 3.51655 15.5999L3.51708 15.5994L9.11629 10.0002L3.51655 4.40044C3.39934 4.28323 3.3335 4.12425 3.3335 3.9585C3.3335 3.61332 3.61332 3.3335 3.9585 3.3335C4.12425 3.3335 4.28323 3.39934 4.40057 3.51668L10.0002 9.11629L15.5999 3.51655Z"
+        fill="black"
+        fillOpacity="0.6"
+      />
+    </svg>
+  )
+}
 
 function InspectIcon() {
   return (
@@ -66,6 +76,20 @@ function samePins(a, b) {
   )
 }
 
+function sameBox(prev, next) {
+  return (
+    !!prev &&
+    prev.snapped === next.snapped &&
+    !!prev.pinned === !!next.pinned &&
+    prev.radius === next.radius &&
+    prev.label === next.label &&
+    nearly(prev.top, next.top) &&
+    nearly(prev.left, next.left) &&
+    nearly(prev.width, next.width) &&
+    nearly(prev.height, next.height)
+  )
+}
+
 /** 序号贴在选区左上角外侧，贴边时收回屏幕内 */
 function badgePosition(pin, phoneW, phoneH) {
   let top = pin.top - BADGE + 8
@@ -106,8 +130,13 @@ export default function ElementPicker({
   edgeDock = false,
   sideMotion = '150ms cubic-bezier(0, 0, 0.2, 1)',
   onPickingChange,
+  onDiscard,
+  deletingN = null,
+  onBadgePress,
+  exitSelectRef,
 }) {
   const fabRef = useRef(null)
+  const overlayRef = useRef(null) // 遮罩容器，蓝框和挖洞都相对它定位
   const [active, setActive] = useState(false)
   const [solo, setSolo] = useState(false)
   const [box, setBox] = useState(null)
@@ -138,6 +167,7 @@ export default function ElementPicker({
   const regionsRef = useRef(regions)
   const editingRef = useRef(editing)
   const syncPinsRef = useRef(() => {})
+  const trackFramesRef = useRef(() => {})
   const runningRef = useRef(false)
   const pickingRef = useRef(false)
   const onPickingChangeRef = useRef(onPickingChange)
@@ -155,10 +185,16 @@ export default function ElementPicker({
   onSoloStartRef.current = onSoloStart
   onSoloTargetRef.current = onSoloTarget
   onSoloFinishRef.current = onSoloFinish
+  const onDiscardRef = useRef(onDiscard)
+  onDiscardRef.current = onDiscard
   regionsRef.current = regions
   editingRef.current = editing
 
   const phoneBox = () => phoneRef.current?.getBoundingClientRect()
+
+  // 遮罩 SVG 铺在这个容器上。用它的视口矩形做原点，滚动和预览卡片内边距都已经含在 getBoundingClientRect 里
+  const maskOrigin = () =>
+    overlayRef.current?.getBoundingClientRect() || phoneRef.current?.getBoundingClientRect()
 
   const insideFab = (x, y) => {
     const rect = fabRef.current?.getBoundingClientRect()
@@ -167,10 +203,10 @@ export default function ElementPicker({
   }
 
   const freeBox = (x, y) => {
-    const phone = phoneBox()
+    const origin = maskOrigin()
     return {
-      top: y - BUTTON / 2 - phone.top,
-      left: x - BUTTON / 2 - phone.left,
+      top: y - BUTTON / 2 - origin.top,
+      left: x - BUTTON / 2 - origin.left,
       width: BUTTON,
       height: BUTTON,
       radius: `${BUTTON / 2}px`,
@@ -180,11 +216,11 @@ export default function ElementPicker({
   }
 
   const snapBox = (el) => {
-    const phone = phoneBox()
+    const origin = maskOrigin()
     const rect = el.getBoundingClientRect()
     return {
-      top: rect.top - phone.top,
-      left: rect.left - phone.left,
+      top: rect.top - origin.top,
+      left: rect.left - origin.left,
       width: rect.width,
       height: rect.height,
       radius: readRadius(el),
@@ -231,22 +267,7 @@ export default function ElementPicker({
       }
     }
 
-    setBox((prev) => {
-      if (
-        prev &&
-        prev.snapped === next.snapped &&
-        !!prev.pinned === !!next.pinned &&
-        prev.radius === next.radius &&
-        prev.label === next.label &&
-        nearly(prev.top, next.top) &&
-        nearly(prev.left, next.left) &&
-        nearly(prev.width, next.width) &&
-        nearly(prev.height, next.height)
-      ) {
-        return prev
-      }
-      return next
-    })
+    setBox((prev) => (sameBox(prev, next) ? prev : next))
   }
 
   // 多选或单选听写都算选中态，父级据此把全屏里藏起的输入框收回来
@@ -313,6 +334,14 @@ export default function ElementPicker({
     notifyPicking(keepMulti && activeRef.current)
   }
 
+  // 顶部返回和右下角叉都走这里：退出多选，或取消单选且不发送
+  if (exitSelectRef) {
+    exitSelectRef.current = () => {
+      if (soloRef.current) endSolo(false)
+      else exit()
+    }
+  }
+
   // 确认后留在点选里，父级负责把选区留在遮罩上并插入输入框
   const confirm = (el) => {
     if (!el) return
@@ -322,11 +351,12 @@ export default function ElementPicker({
     onSelectRef.current?.({ el, summary, text })
   }
 
-  // 已选元素会滚动，序号和高亮跟着元素边界走
+  // 已选元素会滚动，序号和高亮跟着元素边界走。视口用遮罩容器的边框盒，和 SVG 像素一一对应
   syncPinsRef.current = () => {
     const phone = phoneRef.current
-    if (!phone) return
-    const origin = phone.getBoundingClientRect()
+    const frame = overlayRef.current || phone
+    if (!phone || !frame) return
+    const origin = frame.getBoundingClientRect()
     const next = []
     for (const region of regionsRef.current) {
       const el = region.el
@@ -343,10 +373,21 @@ export default function ElementPicker({
     }
     setPins((prev) => (samePins(prev, next) ? prev : next))
     setViewport((prev) =>
-      prev.width === phone.clientWidth && prev.height === phone.clientHeight
+      Math.abs(prev.width - origin.width) < 0.5 && Math.abs(prev.height - origin.height) < 0.5
         ? prev
-        : { width: phone.clientWidth, height: phone.clientHeight },
+        : { width: origin.width, height: origin.height },
     )
+  }
+
+  // 跟手框如果还吸附在元素上，和已选框一样按元素当前边界重算，不用切换前的矩形
+  trackFramesRef.current = () => {
+    syncPinsRef.current()
+    const el = snappedRef.current
+    if ((!activeRef.current && !soloRef.current) || !el?.isConnected) return
+    if (!overlayRef.current && !phoneRef.current) return
+    const next = snapBox(el)
+    next.pinned = !soloRef.current && regionsRef.current.some((region) => region.el === el)
+    setBox((prev) => (sameBox(prev, next) ? prev : next))
   }
 
   useEffect(() => {
@@ -544,7 +585,8 @@ export default function ElementPicker({
       if (drag) {
         // 还没超过位移、也没到按住时间：这是点击
         if (drag.startedActive && !drag.moved && insideFab(e.clientX, e.clientY)) {
-          exit()
+          // 再点一次是放弃：清掉已经插入的选区再退出，不要只退出而把选区留下
+          onDiscardRef.current?.()
           return
         }
         if (!drag.startedActive) enter(e.clientX, e.clientY)
@@ -612,11 +654,85 @@ export default function ElementPicker({
   }, [pageRef])
 
   useLayoutEffect(() => {
-    syncPinsRef.current()
+    const frame = overlayRef.current
+    trackFramesRef.current()
+    if (!frame || typeof ResizeObserver === 'undefined') return
+    // 手机框高度变化（窗口、全屏）时重测，避免 viewBox 还停在旧高度把洞拉偏
+    const ro = new ResizeObserver(() => trackFramesRef.current())
+    ro.observe(frame)
+    return () => ro.disconnect()
   }, [regions])
 
-  const phoneWidth = viewport.width || phoneRef.current?.clientWidth || 390
-  const phoneHeight = viewport.height || phoneRef.current?.clientHeight || 844
+  // 全屏时预览 padding 在过渡，元素在动，但遮罩盒子尺寸经常不变，已选框会停在切换前的坐标。
+  // 阶段一变、或 page/phone 尺寸在变，就在 200ms + 150ms 里逐帧按元素本身重测，不等动画结束再跳。
+  useLayoutEffect(() => {
+    const phone = phoneRef.current
+    const page = pageRef.current
+    if (!phone && !page) return undefined
+
+    let raf = 0
+    let until = 0
+    let measuring = false
+    // 进入是收起再贴边，退出的 padding 动画也落在这段里
+    const followMs = FS_ENTER_MS + FS_DOCK_MS
+
+    const measureNow = () => {
+      if (measuring) return
+      measuring = true
+      try {
+        // 绘制前写进 DOM，避免描边比元素晚一帧
+        flushSync(() => {
+          trackFramesRef.current()
+        })
+      } finally {
+        measuring = false
+      }
+    }
+
+    const tick = (now) => {
+      // 先排下一帧，尽量赶在同帧里更晚的测量之前把坐标写上
+      if (now < until) raf = requestAnimationFrame(tick)
+      else raf = 0
+      measureNow()
+    }
+
+    const armFollow = () => {
+      const nextUntil = performance.now() + followMs
+      if (nextUntil > until) until = nextUntil
+      if (!raf) raf = requestAnimationFrame(tick)
+    }
+
+    let ro
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => {
+        // 尺寸回调可能一帧只来一次，后面的过渡帧交给 rAF 接着量
+        measureNow()
+        armFollow()
+      })
+      if (phone) ro.observe(phone)
+      if (page) ro.observe(page)
+    }
+
+    let mo
+    if (phone && typeof MutationObserver !== 'undefined') {
+      mo = new MutationObserver(() => {
+        armFollow()
+      })
+      mo.observe(phone, {
+        attributes: true,
+        attributeFilter: ['data-fs-phase', 'data-fs-entering'],
+      })
+    }
+
+    return () => {
+      ro?.disconnect()
+      mo?.disconnect()
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [phoneRef, pageRef])
+
+  const phoneWidth = viewport.width
+  const phoneHeight = viewport.height
   const tracking = active || solo
   const locked = tracking || regions.length > 0
   const holes = []
@@ -628,6 +744,7 @@ export default function ElementPicker({
       width: pin.width,
       height: pin.height,
       rx: radiusPx(pin.radius),
+      deleting: deletingN != null && pin.n === deletingN,
     })
   }
   if (tracking && box) {
@@ -640,10 +757,6 @@ export default function ElementPicker({
       rx: radiusPx(box.radius),
     })
   }
-  const labelBelow = box ? box.top < 34 : false
-  // 已有序号时调试标签靠右，避开左上角徽标
-  const alignEnd = box ? pins.length > 0 || box.left + 170 > phoneWidth : false
-
   // 键盘或一行选区输入挡住底栏时，按钮回到手机框里并抬高；平时停在底栏插槽
   const parked = Boolean(fabSlot) && !docked && !editing
   // 全屏贴边时右侧圆角收成 0，图标往外挪 4px；选中态回到正圆
@@ -656,8 +769,8 @@ export default function ElementPicker({
       data-inspect-chrome
       data-fs-edge={flatEdge ? '1' : '0'}
       aria-pressed={active || solo}
-      aria-label={solo ? '松开并发送' : active ? '退出点选' : '进入点选'}
-      title={solo ? '松开并发送' : active ? '退出点选' : '进入点选'}
+      aria-label={solo ? '松开并发送' : active ? '放弃选择' : '进入点选'}
+      title={solo ? '松开并发送' : active ? '放弃选择' : '进入点选'}
       style={{
         pointerEvents: 'auto',
         ...(parked ? null : { bottom: docked ? 72 : 18 }),
@@ -713,6 +826,8 @@ export default function ElementPicker({
             <span>松开</span>
             <span className="mt-px">发送</span>
           </span>
+        ) : active ? (
+          <DiscardIcon />
         ) : (
           <InspectIcon />
         )}
@@ -722,17 +837,18 @@ export default function ElementPicker({
 
   return (
     <>
-    <div className="pointer-events-none absolute inset-0 z-20" data-inspect-ui>
-      {locked && (
+    <div ref={overlayRef} className="pointer-events-none absolute inset-0 z-20" data-inspect-ui>
+      {locked && phoneWidth > 0 && phoneHeight > 0 && (
         <svg
           data-inspect-ui
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 h-full w-full"
-          viewBox={`0 0 ${phoneWidth} ${phoneHeight}`}
-          preserveAspectRatio="none"
+          width={phoneWidth}
+          height={phoneHeight}
+          className="pointer-events-none absolute left-0 top-0"
+          style={{ width: phoneWidth, height: phoneHeight }}
         >
           <defs>
-            {/* 白底保留遮罩，黑色圆角矩形是已选和跟手选框挖出的洞 */}
+            {/* 白底保留遮罩，黑色圆角矩形是已选和跟手选框挖出的洞。不设 viewBox，用户坐标等于容器 CSS 像素 */}
             <mask
               id="inspect-selection-mask"
               maskUnits="userSpaceOnUse"
@@ -764,11 +880,37 @@ export default function ElementPicker({
             height={phoneHeight}
             fill="rgba(18, 20, 24, 0.42)"
             mask="url(#inspect-selection-mask)"
+            style={{
+              maskSize: '100% 100%',
+              WebkitMaskSize: '100% 100%',
+              maskRepeat: 'no-repeat',
+              WebkitMaskRepeat: 'no-repeat',
+              maskPosition: '0 0',
+              WebkitMaskPosition: '0 0',
+            }}
           />
+          {/* 描边和挖洞同一组 x/y/宽高；只要虚线，不再铺淡蓝底 */}
+          {holes.map((hole) => (
+            <rect
+              key={`stroke-${hole.key}`}
+              data-inspect-frame=""
+              x={hole.left}
+              y={hole.top}
+              width={Math.max(hole.width, 0)}
+              height={Math.max(hole.height, 0)}
+              rx={hole.rx}
+              ry={hole.rx}
+              fill={hole.deleting ? 'rgba(255, 59, 48, 0.08)' : 'none'}
+              stroke={hole.deleting ? 'rgba(255, 59, 48, 0.95)' : FRAME_STROKE}
+              strokeWidth="0.5"
+              strokeDasharray={FRAME_DASH}
+            />
+          ))}
         </svg>
       )}
 
-      {locked && (
+      {/* 没进入点选、也还没有选区时遮罩不出现。展开输入框后仍要接住预览空白，只收起键盘 */}
+      {(locked || editing) && (
         <div
           data-inspect-ui
           className={cn(
@@ -802,67 +944,44 @@ export default function ElementPicker({
         />
       )}
 
-      {pins.map((pin) => (
-        <div
-          key={`pin-${pin.n}`}
-          data-inspect-ui
-          className="pointer-events-none absolute"
-          style={{
-            top: pin.top,
-            left: pin.left,
-            width: pin.width,
-            height: pin.height,
-            borderRadius: pin.radius,
-            background: 'rgba(80, 176, 255, 0.28)',
-            boxShadow: '0 0 0 1.5px rgba(26, 140, 255, 0.95)',
-          }}
-        />
-      ))}
-
-      {(active || solo) && box && (
-        <div
-          data-inspect-ui
-          className="pointer-events-none absolute"
-          style={{
-            top: box.top,
-            left: box.left,
-            width: box.width,
-            height: box.height,
-            borderRadius: box.radius,
-            background: 'rgba(80, 176, 255, 0.28)',
-            boxShadow: '0 0 0 1.5px rgba(26, 140, 255, 0.95)',
-            transition: box.snapped ? SNAP_TRANSITION : FREE_TRANSITION,
-            willChange: 'top, left, width, height, border-radius',
-          }}
-        >
-          {box.label && !box.pinned && (
-            <span
-              data-inspect-ui
-              className={cn(
-                'absolute whitespace-nowrap rounded-md bg-[#1a8cff] px-2 py-1 text-[11px] font-medium leading-none text-white shadow-[0_4px_12px_rgba(0,0,0,0.18)]',
-                labelBelow ? 'top-[calc(100%+6px)]' : 'bottom-[calc(100%+6px)]',
-                alignEnd ? 'right-0' : 'left-0',
-              )}
-            >
-              {box.label}
-            </span>
-          )}
-        </div>
-      )}
-
       {pins.map((pin) => {
         const pos = badgePosition(pin, phoneWidth, phoneHeight)
+        const deleting = deletingN != null && pin.n === deletingN
         return (
-          <span
+          <button
             key={`badge-${pin.n}`}
+            type="button"
             data-inspect-ui
-            role="img"
+            data-inspect-badge=""
             aria-label={`选区${pin.n}`}
-            className="pointer-events-none absolute z-10 flex items-center justify-center bg-[#2f89ff] text-[15px] font-semibold leading-none text-white"
+            className={cn(
+              // 浮在遮罩上面，中心点必须点到徽标本身。删除态只换内容，位置和大小不动
+              // 徽标用较实的淡红，选区里那层填充更透，两层不要叠成同一个红
+              // 数字用细字重；变成叉之后是图标，不靠字重
+              'pointer-events-auto absolute z-30 flex items-center justify-center border-0 p-0 text-[15px] font-light leading-none',
+              deleting ? 'bg-[#ffc2c2] text-[#ff3b30]' : 'bg-[#2f89ff] text-white',
+            )}
             style={{ top: pos.top, left: pos.left, width: BADGE, height: BADGE, borderRadius: 8 }}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return
+              // 点序号不是再确认一次元素，也不要把按下交给底下的遮罩
+              e.preventDefault()
+              e.stopPropagation()
+              onBadgePress?.(pin.n)
+            }}
           >
-            {pin.n}
-          </span>
+            {deleting ? (
+              // 就地换成叉，不再在选区右上角另放一枚
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path
+                  d="M15.5999 3.51655C15.7171 3.39934 15.8761 3.3335 16.0418 3.3335C16.387 3.3335 16.6668 3.61332 16.6668 3.9585C16.6668 4.12425 16.601 4.28323 16.4837 4.40057L10.884 10.0002L16.4838 15.5999C16.601 15.7171 16.6668 15.8761 16.6668 16.0418C16.6668 16.387 16.387 16.6668 16.0418 16.6668C15.8761 16.6668 15.7171 16.601 15.5999 16.4838L10.0002 10.884L4.40044 16.4838C4.28323 16.601 4.12425 16.6668 3.9585 16.6668C3.61332 16.6668 3.3335 16.387 3.3335 16.0418C3.3335 15.8761 3.39935 15.7171 3.51655 15.5999L3.51708 15.5994L9.11629 10.0002L3.51655 4.40044C3.39934 4.28323 3.3335 4.12425 3.3335 3.9585C3.3335 3.61332 3.61332 3.3335 3.9585 3.3335C4.12425 3.3335 4.28323 3.39934 4.40057 3.51668L10.0002 9.11629L15.5999 3.51655Z"
+                  fill="currentColor"
+                />
+              </svg>
+            ) : (
+              pin.n
+            )}
+          </button>
         )
       })}
 
