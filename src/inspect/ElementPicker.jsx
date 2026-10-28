@@ -6,7 +6,12 @@ import { createEdgeSwipe, edgeBandSide } from './edgeSwipeSolo.js'
 import { EdgeSwipeDrop, MASK_SCRIM } from './edgeSwipeEffect.jsx'
 import { INSPECT_GLASS_CLASS } from './glassChrome.js'
 import { describeElement, pickElement, readRadius } from './pickElement.js'
-import { FS_DOCK_MS, FS_EDGE_NUDGE, FS_ENTER_MS, FS_TWO_FINGER_MS } from './previewFullscreen.js'
+import {
+  FS_DOCK_MS,
+  FS_EDGE_RADIUS,
+  FS_ENTER_MS,
+  FS_TWO_FINGER_MS,
+} from './previewFullscreen.js'
 import { pointOnInspectChrome, resolveTwoFingerPoint } from './twoFingerPick.js'
 import { viewportPoint } from './viewportPoint.js'
 import {
@@ -17,6 +22,7 @@ import {
   pathBounds,
   pushFreePoint,
 } from './freeSelectPath.js'
+import { SelectionLoading } from './SelectionLoading.jsx'
 
 /** 与悬浮按钮同尺寸，未吸附时选框保持这个大小 */
 const BUTTON = 48
@@ -80,6 +86,57 @@ function samePath(a, b) {
   return a.every((point, i) => nearly(point.x, b[i].x) && nearly(point.y, b[i].y))
 }
 
+function sameLoads(a, b) {
+  if (a.length !== b.length) return false
+  return a.every(
+    (item, i) =>
+      item.key === b[i].key &&
+      item.startedAt === b[i].startedAt &&
+      item.rx === b[i].rx &&
+      nearly(item.top, b[i].top) &&
+      nearly(item.left, b[i].left) &&
+      nearly(item.width, b[i].width) &&
+      nearly(item.height, b[i].height) &&
+      samePath(item.path, b[i].path),
+  )
+}
+
+/** 已发出的选区投回遮罩坐标。自由形状留路径，元素框留圆角，不收成另一块矩形 */
+function projectLoads(shapes, origin, pageEl) {
+  const loads = []
+  for (const shape of shapes) {
+    if (shape.free?.length && pageEl) {
+      const path = pageRatiosToOverlay(shape.free, pageEl, origin)
+      const bounds = pathBounds(path)
+      loads.push({
+        key: shape.key,
+        path,
+        top: bounds.top,
+        left: bounds.left,
+        width: bounds.width,
+        height: bounds.height,
+        rx: 0,
+        startedAt: shape.startedAt || 0,
+      })
+      continue
+    }
+    const el = shape.el
+    if (!el?.isConnected) continue
+    const rect = el.getBoundingClientRect()
+    loads.push({
+      key: shape.key,
+      path: null,
+      top: rect.top - origin.top,
+      left: rect.left - origin.left,
+      width: rect.width,
+      height: rect.height,
+      rx: radiusPx(readRadius(el)),
+      startedAt: shape.startedAt || 0,
+    })
+  }
+  return loads
+}
+
 function samePins(a, b) {
   if (a.length !== b.length) return false
   return a.every(
@@ -126,12 +183,12 @@ function releasedOnChrome(x, y) {
 /**
  * 悬浮按钮 + 点选遮罩。
  * 轻点悬浮按钮进入多选；移动超过阈值或按住约 280ms 进入单选跟手。
- * 两指都在手机框内，连线中点落在页面上按住 200ms 也进入多选，全屏与否都一样。
+ * 两指都在手机框内，连线中点落在页面上按住 200ms 走单选听写。全屏不支持，避免和右缘划入冲突。
  * 底部输入框按住同样约 280ms：滑进页面走单选，没选中元素则只听写。
  * 多选确认后不退出：遮罩、已选高亮和序号都留着，可继续点下一个。
  * 单指从手机框左缘或右缘向内划进预览页，也进同一条单选听写；全屏同样支持。
  * 多选里拖过阈值则沿轨迹圈自由形状，松手收成自由选区；没超过仍是点击元素。
- * 已经在多选里时，两指滑动围成闭合选区：起点边、两侧轨迹、终点边。还没进多选时，双指长按仍是进入多选。
+ * 已经在多选里时，两指滑动围成闭合选区：起点边、两侧轨迹、终点边。还没进多选时，非全屏双指长按走单选。
  * 输入卡片和键盘展开时，点页面只收起键盘，不确认新选区。
  */
 export default function ElementPicker({
@@ -148,6 +205,8 @@ export default function ElementPicker({
   resetEpoch,
   fabSlotRef,
   running = false,
+  loadingShapes = [],
+  runMs = 5000,
   edgeDock = false,
   sideMotion = '150ms cubic-bezier(0, 0, 0.2, 1)',
   onPickingChange,
@@ -163,6 +222,7 @@ export default function ElementPicker({
   const [box, setBox] = useState(null)
 
   const [pins, setPins] = useState([]) // 已确认选区的实时矩形
+  const [loadFrames, setLoadFrames] = useState([]) // 已发出、还在这一轮生成里的选区
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
   const [fabSlot, setFabSlot] = useState(null)
   const [lasso, setLasso] = useState(null) // 正在画的自由形状，遮罩坐标
@@ -205,6 +265,7 @@ export default function ElementPicker({
   const onSoloTargetRef = useRef(onSoloTarget)
   const onSoloFinishRef = useRef(onSoloFinish)
   const regionsRef = useRef(regions)
+  const loadingShapesRef = useRef(loadingShapes)
   const editingRef = useRef(editing)
   const syncPinsRef = useRef(() => {})
   const trackFramesRef = useRef(() => {})
@@ -214,6 +275,7 @@ export default function ElementPicker({
   const fingersRef = useRef(new Map())
   const twoTimerRef = useRef(0)
   const twoGenRef = useRef(0)
+  const twoSoloRef = useRef(false) // 这次单选是双指长按开的，松手仍按中点吸附，不改去单指坐标
   const guardIdsRef = useRef(new Set())
   const blockClickRef = useRef(false)
   const blockClickTimerRef = useRef(0)
@@ -228,6 +290,7 @@ export default function ElementPicker({
   const onDiscardRef = useRef(onDiscard)
   onDiscardRef.current = onDiscard
   regionsRef.current = regions
+  loadingShapesRef.current = loadingShapes
   editingRef.current = editing
 
   const phoneBox = () => phoneRef.current?.getBoundingClientRect()
@@ -383,6 +446,7 @@ export default function ElementPicker({
   const endSolo = (keepMulti) => {
     document.documentElement.style.touchAction = ''
     soloRef.current = false
+    twoSoloRef.current = false
     lastSoloElRef.current = null
     snappedRef.current = null
     pointRef.current = null
@@ -448,6 +512,8 @@ export default function ElementPicker({
       })
     }
     setPins((prev) => (samePins(prev, next) ? prev : next))
+    const loads = projectLoads(loadingShapesRef.current, origin, pageRef.current)
+    setLoadFrames((prev) => (sameLoads(prev, loads) ? prev : loads))
     setViewport((prev) =>
       Math.abs(prev.width - origin.width) < 0.5 && Math.abs(prev.height - origin.height) < 0.5
         ? prev
@@ -704,11 +770,22 @@ export default function ElementPicker({
       onDismiss: dismissGlass,
     })
 
-    // 恰好两指都在手机框内，中点落在页面且不是系统按钮，按住满 200ms 才进入多选
+    // 全屏（phase 不是 off）这次双指长按不进单选也不进多选，避免和右缘划入冲突
+    const twoFingerLongPressBlocked = () => {
+      const phase = phoneRef.current?.getAttribute('data-fs-phase')
+      return (
+        (phase != null && phase !== 'off') ||
+        runningRef.current ||
+        activeRef.current ||
+        soloRef.current
+      )
+    }
+
+    // 恰好两指都在手机框内，中点落在页面且不是系统按钮，按住满 200ms 才走单选听写
     const scheduleTwoFinger = () => {
       const point = twoFingerPoint()
-      // 提前松手、变成一指、中点离开页面或压到系统按钮，都取消这 200ms
-      if (activeRef.current || soloRef.current || !point) {
+      // 提前松手、变成一指、中点离开页面、压到系统按钮，或已经在选/听写/运行中，都取消这 200ms，不发送
+      if (twoFingerLongPressBlocked() || !point) {
         clearTwoTimer()
         return
       }
@@ -717,20 +794,22 @@ export default function ElementPicker({
       twoTimerRef.current = window.setTimeout(() => {
         twoTimerRef.current = 0
         if (gen !== twoGenRef.current) return
-        if (activeRef.current || soloRef.current) return
+        if (twoFingerLongPressBlocked()) return
         const next = twoFingerPoint()
         const ids = [...fingersRef.current.keys()]
         if (!next || ids.length !== 2) return
-        guardIdsRef.current = new Set(ids)
         blockClickRef.current = true
         window.clearTimeout(blockClickTimerRef.current)
         // 这两根手指不再走按钮长按，也不再从输入框另开听写
         if (dragRef.current?.holdTimer) clearTimeout(dragRef.current.holdTimer)
         dragRef.current = null
         barHold.cancel()
+        edgeSwipe.cancel()
         // 先标上，这两根手指的 pointerup 不要再被输入框当成短按
         markBarHold(true)
-        enterRef.current(next.x, next.y)
+        // 中点当作按下位置：击中元素就是 DOM 单选并听写，没击中就是纯听写。松开仍走原来的单选发送
+        twoSoloRef.current = true
+        beginSolo(next.x, next.y)
       }, FS_TWO_FINGER_MS)
     }
 
@@ -802,6 +881,8 @@ export default function ElementPicker({
         }, 80)
       }
       if (!guarded) scheduleTwoFinger()
+      // 两指都松开、且没有正在进行的单选时，清掉长按打标，下一回短按仍能展开输入框
+      if (fingersRef.current.size === 0 && !soloRef.current) markBarHold(false)
       return guarded
     }
 
@@ -843,6 +924,14 @@ export default function ElementPicker({
         }
       }
       if (!activeRef.current && !soloRef.current) return
+      // 双指长按已经进了单选：跟手用两指中点，不改去其中一根手指的位置
+      if (twoSoloRef.current && soloRef.current && fingersRef.current.size >= 2) {
+        const mid = twoFingerPoint()
+        if (mid) {
+          schedule(mid.x, mid.y)
+          return
+        }
+      }
       if (drag && !drag.moved) {
         const dx = p.x - drag.x
         const dy = p.y - drag.y
@@ -867,7 +956,7 @@ export default function ElementPicker({
         return
       }
       if (guarded) {
-        // 双指长按已经进入多选，这次松开不再确认元素，也不当成按钮点击
+        // 已标记的双指手势松开时不再额外确认元素，也不当成按钮点击
         pagePressRef.current = false
         lassoOriginRef.current = null
         lassoRef.current = null
@@ -895,7 +984,8 @@ export default function ElementPicker({
       if (e.button !== 0 && (drag || pagePress)) return
 
       if (drag?.armed || soloRef.current) {
-        updateRef.current(p.x, p.y)
+        // 双指长按松手时沿用中点吸附。改用这一根手指的坐标会把元素弄丢，空内容也不该因此被发出去
+        if (!twoSoloRef.current) updateRef.current(p.x, p.y)
         const el = snappedRef.current
         const info = el
           ? { el, summary: describeElement(el, el.getBoundingClientRect()), text: elementTitle(el) }
@@ -903,6 +993,8 @@ export default function ElementPicker({
         const keepMulti = !!drag?.startedActive && activeRef.current
         endSolo(keepMulti)
         onSoloFinishRef.current?.(info)
+        // 双指长按打过的短按抑制，松手发送后清掉，避免输入框一直当成长按
+        if (fingersRef.current.size === 0) markBarHold(false)
         // 边缘划入松手后的点击不要再点到页面按钮上
         if (blockClickRef.current) {
           window.clearTimeout(blockClickTimerRef.current)
@@ -1030,6 +1122,11 @@ export default function ElementPicker({
     ro.observe(frame)
     return () => ro.disconnect()
   }, [regions])
+
+  // 发出后的点阵不在 regions 里，队列一变就按元素或自由路径重测一次
+  useLayoutEffect(() => {
+    trackFramesRef.current()
+  }, [loadingShapes])
 
   // 全屏时预览 padding 在过渡，元素在动，但遮罩盒子尺寸经常不变，已选框会停在切换前的坐标。
   // 阶段一变、或 page/phone 尺寸在变，就在 200ms + 150ms 里逐帧按元素本身重测，不等动画结束再跳。
@@ -1174,7 +1271,7 @@ export default function ElementPicker({
   }
   // 按钮只作为底栏右侧那一格，不另用坐标钉在手机上
   const parked = Boolean(fabSlot) && !docked
-  // 全屏贴边时右侧圆角收成 0，图标往外挪 4px；选中态回到正圆
+  // 全屏贴边时高度仍是 48，宽度包住 16px 图标并左右各留 4px；靠屏幕一侧圆角为 0，内侧 12px
   const flatEdge = edgeDock && parked
   const fabButton = (
     <button
@@ -1188,12 +1285,13 @@ export default function ElementPicker({
       title={solo ? '松开并发送' : active ? '放弃选择' : '进入点选'}
       style={{
         pointerEvents: 'auto',
-        borderRadius: flatEdge ? '24px 0 0 24px' : '9999px',
+        borderRadius: flatEdge ? `${FS_EDGE_RADIUS}px 0 0 ${FS_EDGE_RADIUS}px` : '9999px',
         transition: `bottom 150ms cubic-bezier(0.4,0,0.2,1), transform 150ms cubic-bezier(0.4,0,0.2,1), box-shadow 150ms cubic-bezier(0.4,0,0.2,1), color 150ms cubic-bezier(0.4,0,0.2,1), border-radius ${sideMotion}`,
       }}
       className={cn(
-        'z-40 flex h-12 w-12 touch-none cursor-pointer items-center justify-center text-black/90 shadow-[0_2px_10px_rgba(0,0,0,0.06)]',
+        'z-40 flex h-12 touch-none cursor-pointer items-center justify-center text-black/90 shadow-[0_2px_10px_rgba(0,0,0,0.06)]',
         INSPECT_GLASS_CLASS,
+        flatEdge ? 'w-fit px-1 [&_svg]:h-4 [&_svg]:w-4' : 'w-12',
         'relative',
         solo
           ? ''
@@ -1229,13 +1327,7 @@ export default function ElementPicker({
       }}
     >
       {/* 听写态只换文案，松手仍是原来的选定元素并发送 */}
-      <span
-        className="inline-flex items-center justify-center"
-        style={{
-          transform: flatEdge ? `translateX(${FS_EDGE_NUDGE}px)` : 'none',
-          transition: `transform ${sideMotion}`,
-        }}
-      >
+      <span className="inline-flex items-center justify-center">
         {solo ? (
           <span className="flex flex-col items-center justify-center whitespace-nowrap text-center text-[11px] leading-none text-[#8e8e93]">
             <span>松开</span>
@@ -1398,6 +1490,8 @@ export default function ElementPicker({
           }}
         />
       )}
+
+      {loadFrames.length > 0 ? <SelectionLoading frames={loadFrames} runMs={runMs} /> : null}
 
       {pins.map((pin) => {
         const pos = badgePosition(pin, phoneWidth, phoneHeight)

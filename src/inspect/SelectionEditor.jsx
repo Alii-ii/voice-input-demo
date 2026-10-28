@@ -1,13 +1,13 @@
 import { useEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import EditorVoiceBar from './EditorVoiceBar.jsx'
-import IosKeyboard from './IosKeyboard.jsx'
 import SelectionField from './SelectionField.jsx'
 import useInspectVoice from './useInspectVoice.js'
 
 /**
- * 底部输入。未进入修改态时只留一行 textarea；
- * 点它之后升起上一轮的输入卡片和模拟键盘，草稿内容两边共用。
+ * 底部输入。未进入修改态时只留一行；
+ * 点开后只升起输入卡片，焦点留在真实 textarea，系统键盘自己弹，不再画模拟键盘。
+ * 草稿和底栏共用同一份内容。
  */
 export default function SelectionEditor({
   expanded,
@@ -49,17 +49,16 @@ export default function SelectionEditor({
     return undefined
   }, [expanded])
 
-  // 拼音框盖在草稿上面，滚轮要推可视行，再由可视行把 scrollLeft 同步回来
+  // 拼音框盖住草稿，滚轮转给输入区；展开后只纵滚，不再横滑
   useEffect(() => {
     if (!expanded) return undefined
     const el = imeRef.current
     if (!el) return undefined
     const onWheel = (e) => {
       const row = rowRef.current
-      if (!row || row.scrollWidth - row.clientWidth <= 2) return
-      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
-      if (!delta) return
-      row.scrollLeft += delta
+      if (!row || row.scrollHeight - row.clientHeight <= 2) return
+      if (!e.deltaY) return
+      row.scrollTop += e.deltaY
       e.preventDefault()
     }
     el.addEventListener('wheel', onWheel, { passive: false })
@@ -171,21 +170,21 @@ export default function SelectionEditor({
               cursor={cursor}
               showCaret
               flush
+              multiline
               scrollerRef={rowRef}
               scrollSyncRef={imeRef}
               armedN={armedN}
               onTagPress={onTagPress}
             />
-            {/* 只接输入法，不另画一行；文字仍由上方草稿展示。这块区域本身不要内边距，行高跟字形齐，避免把字压到下半截 */}
+            {/* 真实输入框接系统键盘和拼音，不另画模拟键盘。文字仍由上方草稿展示 */}
             <textarea
               ref={imeRef}
               rows={1}
-              wrap="off"
               data-inspect-ime="editor"
               aria-label="拼音输入"
               autoComplete="off"
               spellCheck={false}
-              className="absolute inset-0 z-10 box-border block w-full resize-none overflow-hidden whitespace-nowrap border-0 bg-transparent p-0 text-[16px] leading-none text-transparent caret-transparent outline-none"
+              className="absolute inset-0 z-10 box-border block h-full w-full resize-none overflow-hidden whitespace-pre-wrap break-words border-0 bg-transparent p-0 font-light text-[16px] leading-6 text-transparent caret-transparent outline-none"
             />
           </div>
 
@@ -229,8 +228,6 @@ export default function SelectionEditor({
           )}
         </div>
       </div>
-
-      <IosKeyboard onInsert={onInsert} onBackspace={onBackspace} />
     </div>
   )
 }

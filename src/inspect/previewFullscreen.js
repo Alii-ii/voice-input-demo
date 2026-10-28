@@ -9,12 +9,13 @@ export const FS_DOCK_MS = 150
 export const FS_EXIT_MS = 200
 export const FS_EASE_OUT = 'cubic-bezier(0, 0, 0.2, 1)'
 
-/** 两指按住这么久进入多选，全屏和非全屏同一档 */
+/** 两指按住这么久。非全屏走单选听写；全屏不支持，避免和右缘划入冲突 */
 export const FS_TWO_FINGER_MS = 200
 
-/** 底栏圆钮现在的左边距（px-4）；贴边后再把图标往外侧挪 4px */
+/** 底栏圆钮离手机左右缘的距离。贴边时按钮贴到屏幕边缘，这条不再留白 */
 export const FS_SIDE_INSET = 16
-export const FS_EDGE_NUDGE = 4
+/** 全屏贴边靠屏幕一侧圆角为 0，内侧圆角 12px。按钮宽包住 16px 图标，左右各 4px */
+export const FS_EDGE_RADIUS = 12
 /** 16 + 48 按钮 + gap-2.5，输入胶囊夹在两侧圆钮中间 */
 export const FS_INPUT_INSET = 74
 

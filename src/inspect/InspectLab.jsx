@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import DeviceFrame from './DeviceFrame.jsx'
 import { startDictation } from './dictation.js'
 import ElementPicker from './ElementPicker.jsx'
@@ -13,6 +13,22 @@ import { useVisualFrame } from './useVisualFrame.js'
 
 /** 发出后若没点停止，大约 5 秒回到空闲底栏 */
 const AGENT_RUN_MS = 5000
+
+/** 发出当时的选区几何。元素留引用，自由形状抄一份页面比例，清草稿后点阵还能跟着走 */
+function snapshotSelection(regions) {
+  const shapes = []
+  for (const region of regions) {
+    if (region.free?.length) {
+      shapes.push({
+        el: null,
+        free: region.free.map((point) => ({ x: point.x, y: point.y })),
+      })
+      continue
+    }
+    if (region.el) shapes.push({ el: region.el, free: null })
+  }
+  return shapes
+}
 
 /** 移动端点选编辑实验台：手机框里放预约页，右下角进入检查元素 */
 export default function InspectLab() {
@@ -29,6 +45,7 @@ export default function InspectLab() {
   const [picking, setPicking] = useState(false)
   const [armedN, setArmedN] = useState(null)
   const runTimerRef = useRef(0)
+  const runSeqRef = useRef(0)
   const { phase, entering, fullscreen, toggle, syncInput } = usePreviewFullscreen()
   // 窄屏或粗指针放不下说明时，整台手机铺满视口。不调用全屏 toggle，phase 仍由产品按钮决定
   const mobileStage = useMobileStage()
@@ -46,9 +63,26 @@ export default function InspectLab() {
 
   useEffect(() => () => window.clearTimeout(runTimerRef.current), [])
 
-  // 正在跑的一条占着计时器。后面发出的内容只排队，等当前这条结束再接着跑
+  // 正在跑的一条占着计时器。后面发出的内容只排队，等当前这条结束再接着跑。
+  // 每条带上发出时的选区，点阵只活到这一轮结束，不跟后面新录入一起拆掉
   const [runQueue, setRunQueue] = useState([])
   const runQueueRef = useRef([])
+
+  const beginHead = () => {
+    const queue = runQueueRef.current
+    if (!queue.length) {
+      setRunning(false)
+      return
+    }
+    const startedAt = performance.now()
+    const head = { ...queue[0], startedAt }
+    const next = [head, ...queue.slice(1)]
+    runQueueRef.current = next
+    setRunQueue(next)
+    setLastSent(head.message)
+    setRunning(true)
+    runTimerRef.current = window.setTimeout(settleHead, AGENT_RUN_MS)
+  }
 
   const settleHead = () => {
     runTimerRef.current = 0
@@ -59,21 +93,30 @@ export default function InspectLab() {
       setRunning(false)
       return
     }
-    setLastSent(rest[0])
-    setRunning(true)
-    runTimerRef.current = window.setTimeout(settleHead, AGENT_RUN_MS)
+    beginHead()
   }
 
-  const enqueueRun = (message) => {
+  const enqueueRun = (message, shapes = []) => {
     if (!message) return
-    const next = [...runQueueRef.current, message]
+    const id = ++runSeqRef.current
+    const item = {
+      id,
+      message,
+      startedAt: 0,
+      shapes: shapes.map((shape, index) => ({
+        key: `${id}-${index}`,
+        el: shape.el || null,
+        free: shape.free?.length ? shape.free.map((point) => ({ x: point.x, y: point.y })) : null,
+      })),
+    }
+    const next = [...runQueueRef.current, item]
     runQueueRef.current = next
-    setRunQueue(next)
     // 已经有一条在跑就不要清掉它的计时，新内容留在后面
-    if (runTimerRef.current) return
-    setLastSent(message)
-    setRunning(true)
-    runTimerRef.current = window.setTimeout(settleHead, AGENT_RUN_MS)
+    if (runTimerRef.current) {
+      setRunQueue(next)
+      return
+    }
+    beginHead()
   }
 
   const stopRunning = () => {
@@ -233,13 +276,15 @@ export default function InspectLab() {
     const message = formatSoloMessage(tag, cur?.speech || '')
     soloRef.current = null
     setSoloDraft(null)
-    if (message) enqueueRun(message)
+    const shapes = info?.el ? [{ el: info.el, free: null }] : []
+    if (message) enqueueRun(message, shapes)
   }
 
   // 多选发送：记下这条消息，选区、键盘和跟手都回到进入点选前；有内容才进入进行中
   const onSend = () => {
     const message = plainText(draftRef.current.segments).trim()
-    if (message) enqueueRun(message)
+    const shapes = snapshotSelection(regionsRef.current)
+    if (message) enqueueRun(message, shapes)
     const empty = createDraft()
     regionsRef.current = []
     draftRef.current = empty
@@ -248,6 +293,20 @@ export default function InspectLab() {
     setEditing(false)
     setResetEpoch((n) => n + 1)
   }
+
+  // 队列里每一轮的选区都留着，进度从该轮真正开始跑才走
+  const loadingShapes = useMemo(
+    () =>
+      runQueue.flatMap((run) =>
+        run.shapes.map((shape) => ({
+          key: shape.key,
+          el: shape.el,
+          free: shape.free,
+          startedAt: run.startedAt,
+        })),
+      ),
+    [runQueue],
+  )
 
   const onRestore = (next) => {
     const restored = {
@@ -326,6 +385,8 @@ export default function InspectLab() {
           fabSlotRef={fabSlotRef}
           docked={false}
           running={running}
+          loadingShapes={loadingShapes}
+          runMs={AGENT_RUN_MS}
           edgeDock={phase === 'dock'}
           sideMotion={sideDuration(phase)}
           onPickingChange={setPicking}

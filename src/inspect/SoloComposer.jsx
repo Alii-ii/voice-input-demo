@@ -20,7 +20,7 @@ export function SoloScrollLine({ prefix = '', segments = null, label = '', summa
 
   return (
     <ScrollFadeLine pinEnd enter scrollKey={scrollKey}>
-      <div className="inline-flex w-max shrink-0 items-center whitespace-nowrap text-[15px] leading-none text-[#1c1c1e]">
+      <div className="inline-flex w-max shrink-0 items-center whitespace-nowrap font-light text-[15px] leading-none text-[#1c1c1e]">
         {lead
           ? segments.map((seg, index) =>
               seg.type === 'tag' ? (

@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import AgentPhrase from './AgentPhrase.jsx'
 import BarDraftLine from './BarDraftLine.jsx'
 import { SoloScrollLine, SoloWave } from './SoloComposer.jsx'
 import { INSPECT_GLASS_CLASS } from './glassChrome.js'
 import { scrollChildIntoView } from './ScrollFadeLine.jsx'
 import { padCaretTextarea } from './syncImeScroll.js'
 import {
-  FS_EDGE_NUDGE,
+  FS_EDGE_RADIUS,
   FS_SIDE_INSET,
   expandDuration,
   inputDuration,
@@ -264,7 +263,7 @@ export default function DeviceFrame({
             {/* 选择态标题用细字重，颜色和位置不动 */}
             <p
               data-select-title=""
-              className="pointer-events-none absolute left-16 right-16 top-1/2 -translate-y-1/2 text-center text-[15px] font-light tracking-[-0.01em] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]"
+              className="pointer-events-none absolute left-16 right-16 top-1/2 -translate-y-1/2 text-center text-[19px] font-light tracking-[-0.01em] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]"
             >
               {selectMode === 'solo' ? '选择元素, 松开发送' : '选择元素'}
             </p>
@@ -274,12 +273,13 @@ export default function DeviceFrame({
             <CircleButton label="对话" locked={fullscreen}>
               <ChatIcon />
             </CircleButton>
+            {/* 占满这一行左右圆钮之间的剩余宽度，圆钮仍是 48 */}
             <button
               type="button"
               aria-pressed="true"
               data-inspect-ui
               data-inspect-chrome
-              className={`flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-full px-4 text-[15px] font-medium tracking-[-0.01em] text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS}`}
+              className={`flex h-12 w-full min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-4 text-[15px] font-medium tracking-[-0.01em] text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS}`}
               style={{ pointerEvents: fullscreen ? 'none' : 'auto' }}
             >
               <PhoneIcon />
@@ -319,18 +319,12 @@ export default function DeviceFrame({
           onClick={onToggleFullscreen}
           style={{
             pointerEvents: 'auto',
-            borderRadius: edge ? '0 24px 24px 0' : '24px',
+            borderRadius: edge ? `0 ${FS_EDGE_RADIUS}px ${FS_EDGE_RADIUS}px 0` : '24px',
             transition: `border-radius ${sideMotion}`,
           }}
-          className={`relative flex h-12 w-12 shrink-0 items-center justify-center p-0 text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS}`}
+          className={`relative flex h-12 shrink-0 items-center justify-center text-[#1c1c1e] shadow-[0_2px_10px_rgba(0,0,0,0.06)] ${INSPECT_GLASS_CLASS} ${edge ? 'w-fit px-1 [&_svg]:h-4 [&_svg]:w-4' : 'w-12 p-0'}`}
         >
-          <span
-            className="inline-flex"
-            style={{
-              transform: edge ? `translateX(-${FS_EDGE_NUDGE}px)` : 'none',
-              transition: `transform ${sideMotion}`,
-            }}
-          >
+          <span className="inline-flex">
             <span
               key={fullscreen ? 'exit' : 'enter'}
               className={fullscreen ? 'inspect-fs-icon-enter inline-flex' : 'inspect-fs-icon-exit inline-flex'}
@@ -371,23 +365,23 @@ export default function DeviceFrame({
                 <PlusIcon />
               </button>
             )}
-            {/* 空闲显示草稿；进行中改展示进程文案，不和草稿叠在一起 */}
-            <div className="relative h-6 min-w-0 flex-1 overflow-hidden">
+            {/* 空闲显示草稿；进行中占位留空，不叠进程文案。这一层文字用细体 */}
+            <div className="relative h-6 min-w-0 flex-1 overflow-hidden font-light">
               <textarea
                 ref={inputRef}
                 rows={1}
                 wrap="off"
                 readOnly={running || dictating}
                 data-inspect-ime="bar"
-                aria-label={running ? 'Agent 进行中' : dictating ? '听写输入' : text ? '选区输入' : '按住说话'}
+                aria-label={dictating ? '听写输入' : text ? '选区输入' : '按住说话'}
                 placeholder={running || dictating ? '' : 'Hold to talk...'}
-                value={running || dictating ? '' : text}
+                value={dictating ? '' : text}
                 onChange={() => {
                   // value 始终跟草稿 plainText，上屏文字在 compositionend 写入
                 }}
                 style={{ height: 24, minHeight: 24, maxHeight: 24 }}
                 className={
-                  'box-border block h-6 w-full min-w-0 resize-none overflow-hidden whitespace-nowrap border-0 bg-transparent px-0 py-0 text-[15px] leading-6 outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden placeholder:text-[#b1b1b6] ' +
+                  'box-border block h-6 w-full min-w-0 resize-none overflow-hidden whitespace-nowrap border-0 bg-transparent px-0 py-0 font-light text-[15px] leading-6 outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden placeholder:font-light placeholder:text-[#b1b1b6] ' +
                   (rich ? 'text-transparent caret-transparent ' : 'text-[#1c1c1e] ') +
                   (dictating ? 'pointer-events-none' : '')
                 }
@@ -440,7 +434,6 @@ export default function DeviceFrame({
                   panRef.current = null
                 }}
               />
-              {running && !dictating && !selectMode ? <AgentPhrase /> : null}
               {rich ? (
                 <div className="pointer-events-none absolute inset-0">
                   {/* 折叠态不把点击交给芯片，否则热区挡住短按，输入框展不开。删除只在展开态 */}
@@ -502,7 +495,7 @@ export default function DeviceFrame({
           ref={bindFabSlot}
           data-fs-edge={edge ? '1' : '0'}
           data-fs-fab-slot=""
-          className="relative h-12 w-12 shrink-0"
+          className={edge ? 'relative h-12 w-fit shrink-0' : 'relative h-12 w-12 shrink-0'}
         />
       </div>
     </div>

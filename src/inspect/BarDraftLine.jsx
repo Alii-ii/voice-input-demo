@@ -19,7 +19,7 @@ const BarDraftLine = forwardRef(function BarDraftLine(
   return (
     <ScrollFadeLine ref={ref} caretRef={caretRef} scrollKey={scrollKey} className="pointer-events-none">
       {/* 整行不接点击，短按仍落到 textarea；只有芯片自己可点 */}
-      <div className="pointer-events-none inline-flex w-max shrink-0 items-center gap-px whitespace-nowrap text-[15px] leading-none text-[#1c1c1e]">
+      <div className="pointer-events-none inline-flex w-max shrink-0 items-center gap-px whitespace-nowrap font-light text-[15px] leading-none text-[#1c1c1e]">
         {segments.map((seg, index) => {
           if (seg.type === 'tag') {
             return (
