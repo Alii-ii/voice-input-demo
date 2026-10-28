@@ -29,7 +29,8 @@ export default function StudyRoomPage({ showStatusBar = true }) {
   const [booked, setBooked] = useState(false)
 
   return (
-    <div data-inspect-skip className="flex min-h-full flex-col bg-white text-[#1c1c1e]">
+    // 整页文字不可划选，避免点选时拖出系统选区
+    <div data-inspect-skip className="select-none flex min-h-full flex-col bg-white text-[#1c1c1e]">
       <div className="relative">
         <img
           src={heroUrl}

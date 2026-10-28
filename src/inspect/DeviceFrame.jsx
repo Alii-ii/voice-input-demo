@@ -91,7 +91,8 @@ export default function DeviceFrame({
   const showInput = !fullscreen || fsPhase === 'pick'
   showInputRef.current = showInput
   // 缩略态用芯片层画草稿；textarea 仍是真正的焦点，给拼音用
-  const rich = !running && !dictating && Array.isArray(segments)
+  // 生成中如果又进入了选择，草稿仍要露出来，不要被进行中的文案盖住
+  const rich = (!running || !!selectMode) && !dictating && Array.isArray(segments)
   const topMotion = expandDuration(fsEntering)
   const sideMotion = sideDuration(fsPhase)
   const inputMotion = inputDuration(fsPhase, fsEntering)
@@ -439,7 +440,7 @@ export default function DeviceFrame({
                   panRef.current = null
                 }}
               />
-              {running && !dictating ? <AgentPhrase /> : null}
+              {running && !dictating && !selectMode ? <AgentPhrase /> : null}
               {rich ? (
                 <div className="pointer-events-none absolute inset-0">
                   {/* 折叠态不把点击交给芯片，否则热区挡住短按，输入框展不开。删除只在展开态 */}

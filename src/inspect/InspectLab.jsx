@@ -46,19 +46,41 @@ export default function InspectLab() {
 
   useEffect(() => () => window.clearTimeout(runTimerRef.current), [])
 
-  // 有内容发出去之后，底栏进入进行中；再发一次会重新计时
-  const startRunning = () => {
-    window.clearTimeout(runTimerRef.current)
-    setRunning(true)
-    runTimerRef.current = window.setTimeout(() => {
-      runTimerRef.current = 0
+  // 正在跑的一条占着计时器。后面发出的内容只排队，等当前这条结束再接着跑
+  const [runQueue, setRunQueue] = useState([])
+  const runQueueRef = useRef([])
+
+  const settleHead = () => {
+    runTimerRef.current = 0
+    const rest = runQueueRef.current.slice(1)
+    runQueueRef.current = rest
+    setRunQueue(rest)
+    if (!rest.length) {
       setRunning(false)
-    }, AGENT_RUN_MS)
+      return
+    }
+    setLastSent(rest[0])
+    setRunning(true)
+    runTimerRef.current = window.setTimeout(settleHead, AGENT_RUN_MS)
+  }
+
+  const enqueueRun = (message) => {
+    if (!message) return
+    const next = [...runQueueRef.current, message]
+    runQueueRef.current = next
+    setRunQueue(next)
+    // 已经有一条在跑就不要清掉它的计时，新内容留在后面
+    if (runTimerRef.current) return
+    setLastSent(message)
+    setRunning(true)
+    runTimerRef.current = window.setTimeout(settleHead, AGENT_RUN_MS)
   }
 
   const stopRunning = () => {
     window.clearTimeout(runTimerRef.current)
     runTimerRef.current = 0
+    runQueueRef.current = []
+    setRunQueue([])
     setRunning(false)
   }
 
@@ -211,19 +233,13 @@ export default function InspectLab() {
     const message = formatSoloMessage(tag, cur?.speech || '')
     soloRef.current = null
     setSoloDraft(null)
-    if (message) {
-      setLastSent(message)
-      startRunning()
-    }
+    if (message) enqueueRun(message)
   }
 
   // 多选发送：记下这条消息，选区、键盘和跟手都回到进入点选前；有内容才进入进行中
   const onSend = () => {
     const message = plainText(draftRef.current.segments).trim()
-    if (message) {
-      setLastSent(message)
-      startRunning()
-    }
+    if (message) enqueueRun(message)
     const empty = createDraft()
     regionsRef.current = []
     draftRef.current = empty
@@ -337,7 +353,7 @@ export default function InspectLab() {
           fsPhase={phase}
           fsEntering={entering}
           onToggleFullscreen={toggle}
-          barHoldEnabled={!running && !editing && !picking && !soloDraft}
+          barHoldEnabled={!editing && !picking && !soloDraft}
           selectMode={selectMode}
           onExitSelect={discardSelections}
           armedN={selectMode === 'multi' ? armedN : null}
@@ -353,7 +369,12 @@ export default function InspectLab() {
               : null
           }
         />
-        <p className="pointer-events-none sr-only" data-inspect-ui data-last-sent={lastSent}>
+        <p
+          className="pointer-events-none sr-only"
+          data-inspect-ui
+          data-last-sent={lastSent}
+          data-run-pending={Math.max(0, runQueue.length - (running ? 1 : 0))}
+        >
           {lastSent}
         </p>
         {!soloDraft && editing ? (

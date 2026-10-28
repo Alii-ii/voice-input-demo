@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal, flushSync } from 'react-dom'
 import { cn } from '../lib/cn.js'
 import { createBarHold, markBarHold } from './barHold.js'
+import { createEdgeSwipe, edgeBandSide } from './edgeSwipeSolo.js'
+import { EdgeSwipeDrop, MASK_SCRIM } from './edgeSwipeEffect.jsx'
 import { INSPECT_GLASS_CLASS } from './glassChrome.js'
 import { describeElement, pickElement, readRadius } from './pickElement.js'
 import { FS_DOCK_MS, FS_EDGE_NUDGE, FS_ENTER_MS, FS_TWO_FINGER_MS } from './previewFullscreen.js'
@@ -127,6 +129,7 @@ function releasedOnChrome(x, y) {
  * 两指都在手机框内，连线中点落在页面上按住 200ms 也进入多选，全屏与否都一样。
  * 底部输入框按住同样约 280ms：滑进页面走单选，没选中元素则只听写。
  * 多选确认后不退出：遮罩、已选高亮和序号都留着，可继续点下一个。
+ * 单指从手机框左缘或右缘向内划进预览页，也进同一条单选听写；全屏同样支持。
  * 多选里拖过阈值则沿轨迹圈自由形状，松手收成自由选区；没超过仍是点击元素。
  * 已经在多选里时，两指滑动围成闭合选区：起点边、两侧轨迹、终点边。还没进多选时，双指长按仍是进入多选。
  * 输入卡片和键盘展开时，点页面只收起键盘，不确认新选区。
@@ -163,6 +166,12 @@ export default function ElementPicker({
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
   const [fabSlot, setFabSlot] = useState(null)
   const [lasso, setLasso] = useState(null) // 正在画的自由形状，遮罩坐标
+  const [edgeFx, setEdgeFx] = useState(null) // 边缘 toggle 的进度。遮罩透明度另算，不跟这颗圆合成一块
+  const [maskOn, setMaskOn] = useState(false) // 其他入口的遮罩淡入开关
+  const edgeRevealRef = useRef(false)
+  const edgeInstantRef = useRef(false) // 水滴铺满后遮罩直接接上，不再从 0 淡一次
+  const edgeFxRef = useRef(null)
+  edgeFxRef.current = edgeFx
 
   // 生产构建里这条 effect 可能早于底栏插槽。插槽出现时再绑一次，只在节点变化时更新，避免嵌套更新把整页卸掉
   useLayoutEffect(() => {
@@ -379,6 +388,7 @@ export default function ElementPicker({
     pointRef.current = null
     setSolo(false)
     setBox(null)
+    setEdgeFx(null)
     if (!keepMulti) {
       activeRef.current = false
       setActive(false)
@@ -615,8 +625,9 @@ export default function ElementPicker({
       }
     }
 
+    // 生成中不挡新手势：上一条留在队列里继续跑，这里仍可再划入、长按或点进选择
     const canBarHold = () =>
-      !runningRef.current && !editingRef.current && !activeRef.current && !soloRef.current
+      !editingRef.current && !activeRef.current && !soloRef.current
 
     // 输入框长按跟右侧按钮同一档。成立后走单选听写；没滑到元素就只有语音
     const barHold = createBarHold({
@@ -634,6 +645,63 @@ export default function ElementPicker({
         if (el) el.blur()
         beginSolo(x, y)
       },
+    })
+
+    // 边缘划入和输入框长按、点选按钮长按进的是同一条单选。没划进去之前不拦默认行为
+    let glassFrame = 0
+    const stopGlass = () => cancelAnimationFrame(glassFrame)
+    const dismissGlass = () => {
+      stopGlass()
+      const from = edgeFxRef.current
+      // 没过阈值：小山收回边缘，不进入单选
+      if (!from || from.phase === 'hold') return
+      const start = performance.now()
+      const step = (now) => {
+        const t = Math.min(1, (now - start) / 170)
+        const remain = (1 - t) * (1 - t)
+        const edgeX = from.side === 'left' ? from.x - from.inward : from.x + from.inward
+        let alive = true
+        setEdgeFx((prev) => {
+          if (!prev || prev.phase !== 'retract') {
+            alive = false
+            return prev
+          }
+          return {
+            ...prev,
+            progress: from.progress * remain,
+            inward: from.inward * remain,
+            x: edgeX + (from.x - edgeX) * remain,
+            spread: 0,
+          }
+        })
+        if (!alive) return
+        if (t < 1) glassFrame = requestAnimationFrame(step)
+        else setEdgeFx((prev) => (prev && prev.phase === 'retract' ? null : prev))
+      }
+      setEdgeFx((prev) => (prev ? { ...prev, phase: 'retract' } : null))
+      glassFrame = requestAnimationFrame(step)
+    }
+    let latestSample = null
+    const edgeSwipe = createEdgeSwipe({
+      allowed: canBarHold,
+      inPage: pageHit,
+      onPreview: (sample) => {
+        if (sample.inward <= 0) return
+        latestSample = sample
+        stopGlass()
+        setEdgeFx({ phase: 'drag', spread: 0, ...sample })
+      },
+      onArm: (x, y) => {
+        // 判定成功只进一次单选。边缘轮廓马上从 DOM 卸掉，避免边缘留下 toggle 快照
+        edgeRevealRef.current = true
+        blockClickRef.current = true
+        clearTwoTimer()
+        barHold.cancel()
+        beginSolo(x, y)
+        stopGlass()
+        setEdgeFx(null)
+      },
+      onDismiss: dismissGlass,
     })
 
     // 恰好两指都在手机框内，中点落在页面且不是系统按钮，按住满 200ms 才进入多选
@@ -711,6 +779,13 @@ export default function ElementPicker({
         lassoRef.current = null
       }
       tryBeginTwoStroke()
+      // 第二指落下就放弃边缘划入，留给双指长按和双指围区
+      if (fingersRef.current.size > 1) {
+        edgeSwipe.cancel()
+      } else if (!blocked) {
+        const side = edgeBandSide(p.x, p.y, phoneRef.current?.getBoundingClientRect())
+        edgeSwipe.down(e.pointerId, p.x, p.y, side)
+      }
     }
 
     // 返回 true 表示这根手指属于已经触发的双指手势，松开时不要再点一次
@@ -751,6 +826,8 @@ export default function ElementPicker({
         }
         if (finger.stroke && !twoStrokeRef.current) sampleStroke(finger, p.x, p.y)
       }
+      // 刚判定为边缘划入才拦住滚动和返回手势；在这之前不 preventDefault
+      if (edgeSwipe.move(e.pointerId, p.x, p.y) && e.cancelable) e.preventDefault()
       const drag = dragRef.current
       if (drag && !drag.armed) {
         const dx = p.x - drag.x
@@ -779,6 +856,7 @@ export default function ElementPicker({
     const onUp = (e) => {
       const p = viewportPoint(e.clientX, e.clientY)
       const twoResult = takeTwoStroke(e.pointerId, p.x, p.y)
+      edgeSwipe.up(e.pointerId)
       const guarded = releaseFinger(e)
       const barResult = barHold.up(e.pointerId)
       if (barResult !== 'none') markBarHold(false)
@@ -825,6 +903,13 @@ export default function ElementPicker({
         const keepMulti = !!drag?.startedActive && activeRef.current
         endSolo(keepMulti)
         onSoloFinishRef.current?.(info)
+        // 边缘划入松手后的点击不要再点到页面按钮上
+        if (blockClickRef.current) {
+          window.clearTimeout(blockClickTimerRef.current)
+          blockClickTimerRef.current = window.setTimeout(() => {
+            blockClickRef.current = false
+          }, 80)
+        }
         return
       }
 
@@ -871,6 +956,7 @@ export default function ElementPicker({
     const onCancel = (e) => {
       const p = viewportPoint(e.clientX, e.clientY)
       const twoResult = takeTwoStroke(e.pointerId, p.x, p.y)
+      edgeSwipe.cancel()
       releaseFinger(e)
       if (barHold.up(e.pointerId) !== 'none') markBarHold(false)
       if (twoResult === 'commit' || twoResult === 'consumed') return
@@ -923,6 +1009,8 @@ export default function ElementPicker({
       if (dragRef.current?.holdTimer) clearTimeout(dragRef.current.holdTimer)
       clearTwoTimer()
       barHold.cancel()
+      edgeSwipe.cancel()
+      stopGlass()
       markBarHold(false)
       window.clearTimeout(blockClickTimerRef.current)
       fingersRef.current.clear()
@@ -1015,6 +1103,41 @@ export default function ElementPicker({
   const phoneHeight = viewport.height
   const tracking = active || solo
   const locked = tracking || regions.length > 0
+  const edgeDragging = edgeFx?.phase === 'drag' || edgeFx?.phase === 'retract'
+  useLayoutEffect(() => {
+    if (!locked) {
+      edgeInstantRef.current = false
+      setMaskOn(false)
+      return
+    }
+    // 边缘划入时遮罩已经跟进度到 1，接上选择态时不要再从 0 闪一次
+    if (edgeRevealRef.current) {
+      edgeRevealRef.current = false
+      edgeInstantRef.current = true
+      setMaskOn(true)
+      return
+    }
+    edgeInstantRef.current = false
+    setMaskOn(false)
+    const id = requestAnimationFrame(() => setMaskOn(true))
+    return () => cancelAnimationFrame(id)
+  }, [locked])
+  // 拖拽过程中遮罩仍是整页矩形，只按进度改透明度
+  const showMask = locked || edgeDragging
+  const veilProgress = edgeDragging
+    ? (edgeFx.progress || 0)
+    : locked
+      ? (maskOn ? 1 : 0)
+      : 0
+  const dropFrame = overlayRef.current?.getBoundingClientRect()
+  const drop = edgeFx && dropFrame
+    ? {
+        side: edgeFx.side,
+        x: edgeFx.x - dropFrame.left,
+        y: edgeFx.y - dropFrame.top,
+        progress: edgeFx.progress || 0,
+      }
+    : null
   const holes = []
   for (const pin of pins) {
     holes.push({
@@ -1130,9 +1253,10 @@ export default function ElementPicker({
   return (
     <>
     <div ref={overlayRef} className="pointer-events-none absolute inset-0 z-20" data-inspect-ui>
-      {locked && phoneWidth > 0 && phoneHeight > 0 && (
+      {showMask && phoneWidth > 0 && phoneHeight > 0 && (
         <svg
           data-inspect-ui
+          data-inspect-mask=""
           aria-hidden="true"
           width={phoneWidth}
           height={phoneHeight}
@@ -1174,9 +1298,11 @@ export default function ElementPicker({
             y="0"
             width={phoneWidth}
             height={phoneHeight}
-            fill="rgba(18, 20, 24, 0.42)"
+            fill={MASK_SCRIM}
             mask="url(#inspect-selection-mask)"
             style={{
+              opacity: veilProgress,
+              transition: edgeDragging || edgeInstantRef.current ? 'none' : 'opacity 100ms linear',
               maskSize: '100% 100%',
               WebkitMaskSize: '100% 100%',
               maskRepeat: 'no-repeat',
@@ -1216,6 +1342,16 @@ export default function ElementPicker({
             ),
           )}
         </svg>
+      )}
+      {drop && edgeFx && (
+        <EdgeSwipeDrop
+          side={drop.side}
+          x={drop.x}
+          y={drop.y}
+          progress={drop.progress}
+          width={phoneWidth}
+          height={phoneHeight}
+        />
       )}
 
       {/* 没进入点选、也还没有选区时遮罩不出现。展开输入框后仍要接住预览空白，只收起键盘 */}
