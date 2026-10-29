@@ -175,6 +175,44 @@ function badgePosition(pin, phoneW, phoneH) {
   return { top, left }
 }
 
+/**
+ * 徽标落在选区哪一角，就把朝向选区的那只角收成 4px。摆放仍由 badgePosition 决定。
+ * 左上指向右下，右上指向左下，左下指向右上，右下指向左上。
+ * 另外三角用边长的一半（13px）画成整圆。写成 9999px 时相邻半径会超过边长，4px 会被一起缩成尖角。
+ */
+function badgeRadiusClass(pos, pin) {
+  const cx = pos.left + BADGE / 2
+  const cy = pos.top + BADGE / 2
+  const corners = [
+    { key: 'tl', x: pin.left, y: pin.top },
+    { key: 'tr', x: pin.left + pin.width, y: pin.top },
+    { key: 'bl', x: pin.left, y: pin.top + pin.height },
+    { key: 'br', x: pin.left + pin.width, y: pin.top + pin.height },
+  ]
+  let nearest = 'tl'
+  let best = Infinity
+  for (const corner of corners) {
+    const dx = cx - corner.x
+    const dy = cy - corner.y
+    const dist = dx * dx + dy * dy
+    if (dist < best) {
+      best = dist
+      nearest = corner.key
+    }
+  }
+  // 整圆半径是边长的一半（13px）。类名写死，方便 Tailwind 扫到
+  if (nearest === 'tr') {
+    return 'rounded-tl-[13px] rounded-tr-[13px] rounded-br-[13px] rounded-bl-[4px]'
+  }
+  if (nearest === 'bl') {
+    return 'rounded-tl-[13px] rounded-tr-[4px] rounded-br-[13px] rounded-bl-[13px]'
+  }
+  if (nearest === 'br') {
+    return 'rounded-tl-[4px] rounded-tr-[13px] rounded-br-[13px] rounded-bl-[13px]'
+  }
+  return 'rounded-tl-[13px] rounded-tr-[13px] rounded-br-[4px] rounded-bl-[13px]'
+}
+
 function releasedOnChrome(x, y) {
   const el = document.elementFromPoint(x, y)
   return el instanceof Element && !!el.closest('[data-inspect-chrome]')
@@ -1508,9 +1546,10 @@ export default function ElementPicker({
               // 徽标用较实的淡红，选区里那层填充更透，两层不要叠成同一个红
               // 数字用细字重；变成叉之后是图标，不靠字重
               'pointer-events-auto absolute z-30 flex items-center justify-center border-0 p-0 text-[15px] font-light leading-none',
+              badgeRadiusClass(pos, pin),
               deleting ? 'bg-[#ffc2c2] text-[#ff3b30]' : 'bg-[#2f89ff] text-white',
             )}
-            style={{ top: pos.top, left: pos.left, width: BADGE, height: BADGE, borderRadius: 8 }}
+            style={{ top: pos.top, left: pos.left, width: BADGE, height: BADGE }}
             onPointerDown={(e) => {
               if (e.button !== 0) return
               // 点序号不是再确认一次元素，也不要把按下交给底下的遮罩

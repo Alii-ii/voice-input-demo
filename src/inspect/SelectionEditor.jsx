@@ -234,8 +234,9 @@ export default function SelectionEditor({
 
 function PlusIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path d="M10 4.2v11.6M4.2 10h11.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    // 实心加号。fill 跟按钮文字走 currentColor，不写死新 SVG 的黑色
+    <svg width="20" height="20" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M8 1.40039C8.33137 1.40039 8.59961 1.66863 8.59961 2V7.40039H14C14.3314 7.40039 14.5996 7.66863 14.5996 8C14.5996 8.33137 14.3314 8.59961 14 8.59961H8.59961V14C8.59961 14.3314 8.33137 14.5996 8 14.5996C7.66863 14.5996 7.40039 14.3314 7.40039 14V8.59961H2C1.66863 8.59961 1.40039 8.33137 1.40039 8C1.40039 7.66863 1.66863 7.40039 2 7.40039H7.40039V2C7.40039 1.66863 7.66863 1.40039 8 1.40039Z" fill="currentColor" />
     </svg>
   )
 }

@@ -55,7 +55,8 @@ export default function ElementTagChip({ label, summary, className, n, armed = f
           : undefined
       }
       className={cn(
-        'inline-flex shrink-0 items-center gap-[3px] bg-transparent',
+        // 左右各留 1px，底栏和展开编辑器共用这一处
+        'inline-flex shrink-0 items-center gap-[3px] bg-transparent px-px',
         // 删除态文字和图标变红，背景保持透明，不铺红底
         armed ? 'text-[#ff3b30]' : 'text-[#2f7fff]',
         onPress && 'pointer-events-auto',

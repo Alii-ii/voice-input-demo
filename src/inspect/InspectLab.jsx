@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import DeviceFrame from './DeviceFrame.jsx'
 import { startDictation } from './dictation.js'
 import ElementPicker from './ElementPicker.jsx'
+import { LOADING_FADE_MS } from './SelectionLoading.jsx'
 import { expandDuration, sideDuration, usePreviewFullscreen } from './previewFullscreen.js'
 import SelectionEditor from './SelectionEditor.jsx'
 import StudyRoomPage from './StudyRoomPage.jsx'
@@ -81,7 +82,8 @@ export default function InspectLab() {
     setRunQueue(next)
     setLastSent(head.message)
     setRunning(true)
-    runTimerRef.current = window.setTimeout(settleHead, AGENT_RUN_MS)
+    // 进度走完后再留 50ms，遮罩淡出才卸载。停止仍是立刻清掉
+    runTimerRef.current = window.setTimeout(settleHead, AGENT_RUN_MS + LOADING_FADE_MS)
   }
 
   const settleHead = () => {

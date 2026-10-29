@@ -627,9 +627,9 @@ function FullscreenIcon() {
 
 function PlusIcon() {
   return (
-    // 跟 Preview 手机图标一样：#1c1c1e，不透明度 0.9
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true" opacity="0.9">
-      <path d="M9 3.6v10.8M3.6 9h10.8" stroke="#1c1c1e" strokeWidth="1.7" strokeLinecap="round" />
+    // 跟 Preview 手机图标一样：#1c1c1e，不透明度 0.9。只换加号路径，颜色仍走这里，不写死新 SVG 的黑
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true" opacity="0.9">
+      <path d="M8 1.40039C8.33137 1.40039 8.59961 1.66863 8.59961 2V7.40039H14C14.3314 7.40039 14.5996 7.66863 14.5996 8C14.5996 8.33137 14.3314 8.59961 14 8.59961H8.59961V14C8.59961 14.3314 8.33137 14.5996 8 14.5996C7.66863 14.5996 7.40039 14.3314 7.40039 14V8.59961H2C1.66863 8.59961 1.40039 8.33137 1.40039 8C1.40039 7.66863 1.66863 7.40039 2 7.40039H7.40039V2C7.40039 1.66863 7.66863 1.40039 8 1.40039Z" fill="#1c1c1e" />
     </svg>
   )
 }
