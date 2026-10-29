@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import BarDraftLine from './BarDraftLine.jsx'
+import { draftEnterAction } from './draftEnterKey.js'
 import { SoloScrollLine, SoloWave } from './SoloComposer.jsx'
 import { INSPECT_GLASS_CLASS } from './glassChrome.js'
 import { scrollChildIntoView } from './ScrollFadeLine.jsx'
@@ -52,6 +53,7 @@ export default function DeviceFrame({
   onActivate,
   onStop,
   onInsert,
+  onSend,
   solo = null,
   fsPhase = 'off',
   fsEntering = false,
@@ -69,7 +71,6 @@ export default function DeviceFrame({
   const panRef = useRef(null)
   const onInsertRef = useRef(onInsert)
   const onActivateRef = useRef(onActivate)
-  const runningRef = useRef(running)
   const dictatingRef = useRef(false)
   const showInputRef = useRef(true)
   const [focused, setFocused] = useState(false)
@@ -81,7 +82,6 @@ export default function DeviceFrame({
   }, [fabSlotRef])
   onInsertRef.current = onInsert
   onActivateRef.current = onActivate
-  runningRef.current = running
   const dictating = !!solo
   dictatingRef.current = dictating
   const fullscreen = fsPhase !== 'off'
@@ -156,7 +156,8 @@ export default function DeviceFrame({
       const el = inputRef.current
       if (!el) return
       if (el.dataset.inspectHold === 'armed') return
-      if (!showInputRef.current || runningRef.current || dictatingRef.current) return
+      // 进行中或队列里已有内容也不挡住短按。听写中仍不展开
+      if (!showInputRef.current || dictatingRef.current) return
       if (pan && pan.id === e.pointerId) {
         const dx = e.clientX - pan.x
         const dy = e.clientY - pan.y
@@ -336,9 +337,7 @@ export default function DeviceFrame({
 
         <div
           data-fs-input={showInput ? '1' : '0'}
-          className={
-            'relative min-w-0 flex-1' + (showInput || !running ? '' : ' [&_*]:!pointer-events-none')
-          }
+          className="relative min-w-0 flex-1"
           style={{
             opacity: showInput ? 1 : 0,
             transform: showInput ? 'none' : 'translateY(12px)',
@@ -353,7 +352,28 @@ export default function DeviceFrame({
             }
             data-inspect-ui
             data-inspect-chrome
-            style={{ pointerEvents: showInput || !running ? 'auto' : 'none' }}
+            style={{ pointerEvents: 'auto' }}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return
+              // 加号、麦克风、停止各自处理，不从胶囊空白这里展开
+              if (e.target instanceof Element && e.target.closest('button')) return
+              // 文字框只有一行高。点在胶囊上下留白或芯片上时，目标不是 textarea，也要能短按展开
+              // 正在跑或队列里已有内容时仍展开。听写中不展开
+              if (dictating || !showInput) return
+              pendingExpandRef.current = true
+              panRef.current = {
+                id: e.pointerId,
+                x: e.clientX,
+                y: e.clientY,
+                left: rowRef.current?.scrollLeft || 0,
+                scrolling: false,
+                locked: false,
+              }
+            }}
+            onPointerCancel={() => {
+              pendingExpandRef.current = false
+              panRef.current = null
+            }}
           >
             {dictating ? null : (
               <button
@@ -366,6 +386,7 @@ export default function DeviceFrame({
               </button>
             )}
             {/* 空闲显示草稿；进行中占位留空，不叠进程文案。这一层文字用细体 */}
+            {/* 生成中右侧已是停止按钮，但草稿为空时仍显示 Hold to talk。有文字时 placeholder 自己不出现；听写中 value 被清空，不能再叠这句 */}
             <div className="relative h-6 min-w-0 flex-1 overflow-hidden font-light">
               <textarea
                 ref={inputRef}
@@ -374,7 +395,7 @@ export default function DeviceFrame({
                 readOnly={running || dictating}
                 data-inspect-ime="bar"
                 aria-label={dictating ? '听写输入' : text ? '选区输入' : '按住说话'}
-                placeholder={running || dictating ? '' : 'Hold to talk...'}
+                placeholder={dictating ? '' : 'Hold to talk...'}
                 value={dictating ? '' : text}
                 onChange={() => {
                   // value 始终跟草稿 plainText，上屏文字在 compositionend 写入
@@ -387,6 +408,21 @@ export default function DeviceFrame({
                 }
                 onFocus={() => setFocused(true)}
                 onBlur={() => setFocused(false)}
+                onKeyDown={(e) => {
+                  // 听写不在这条框里改成编辑，Enter 也不打断长按
+                  if (dictating) return
+                  const action = draftEnterAction(e.nativeEvent)
+                  if (!action) return
+                  // 展开卡片在 window 上处理同一套按键，这里让开，避免发两次
+                  if (document.querySelector('[data-inspect-ime="editor"]')) return
+                  e.preventDefault()
+                  if (action === 'break') {
+                    onInsert?.('\n')
+                    return
+                  }
+                  if (!text.trim()) return
+                  onSend?.()
+                }}
                 onPointerDown={(e) => {
                   if (e.button !== 0) return
                   // 听写中不把焦点送进这条框，避免组词写进多选草稿
@@ -399,8 +435,7 @@ export default function DeviceFrame({
                     e.preventDefault()
                     return
                   }
-                  // 执行中不展开。长按成立前不 preventDefault，桌面拼音和听写计时都还能走
-                  if (running) return
+                  // 正在跑或队列里已有内容时，多选短按仍展开。长按成立前不 preventDefault
                   pendingExpandRef.current = true
                   panRef.current = {
                     id: e.pointerId,

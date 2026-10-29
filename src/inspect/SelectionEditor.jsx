@@ -1,7 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
+import { draftEnterAction } from './draftEnterKey.js'
 import EditorVoiceBar from './EditorVoiceBar.jsx'
 import SelectionField from './SelectionField.jsx'
+import { plainText } from './selectionDraft.js'
 import useInspectVoice from './useInspectVoice.js'
 
 /**
@@ -27,10 +29,14 @@ export default function SelectionEditor({
   const onInsertRef = useRef(onInsert)
   const onBackspaceRef = useRef(onBackspace)
   const onMoveRef = useRef(onMove)
+  const onSendRef = useRef(onSend)
+  const segmentsRef = useRef(segments)
   onCollapseRef.current = onCollapse
   onInsertRef.current = onInsert
   onBackspaceRef.current = onBackspace
   onMoveRef.current = onMove
+  onSendRef.current = onSend
+  segmentsRef.current = segments
 
   const voice = useInspectVoice({ expanded, segments, cursor, onInsert, onRestore })
   const voiceModeRef = useRef(voice.mode)
@@ -87,10 +93,12 @@ export default function SelectionEditor({
     }
     const onKey = (e) => {
       // 退格和字母都留给输入法，等 compositionend 再整段插入
+      // 组词中的 Enter（isComposing / keyCode 229）只确认候选，不发送
       if (imeKey(e)) return
       const voiceMode = voiceModeRef.current
       // 点击进入的语音：Esc 撤回，Enter 采用。和语音页同一套，不收起键盘
-      if (voiceMode === 'voice-click' && (e.key === 'Escape' || e.key === 'Enter')) {
+      // Shift+Enter 仍是换行，不在这里当成采用
+      if (voiceMode === 'voice-click' && (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey))) {
         e.preventDefault()
         if (e.key === 'Escape') undoVoiceRef.current()
         else keepVoiceRef.current()
@@ -111,8 +119,22 @@ export default function SelectionEditor({
         return
       }
       if (e.key === 'Enter') {
+        const action = draftEnterAction(e)
+        if (!action) return
+        // 长按听写时 Enter 不发送、不收起，避免打断这一轮
+        if (voiceMode === 'voice-hold' && action === 'send') {
+          e.preventDefault()
+          return
+        }
+        if (action === 'break') {
+          e.preventDefault()
+          onInsertRef.current('\n')
+          return
+        }
         e.preventDefault()
-        onInsertRef.current('\n')
+        // 去掉首尾空白后为空则不发送、不入队，和发送按钮同一套判断
+        if (!plainText(segmentsRef.current).trim()) return
+        onSendRef.current?.()
         return
       }
       if (e.key === 'ArrowLeft') {

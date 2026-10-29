@@ -9,7 +9,7 @@ export const FS_DOCK_MS = 150
 export const FS_EXIT_MS = 200
 export const FS_EASE_OUT = 'cubic-bezier(0, 0, 0.2, 1)'
 
-/** 两指按住这么久。非全屏走单选听写；全屏不支持，避免和右缘划入冲突 */
+/** 两指按住这么久就进入多选。全屏同样计时；第二指会先取消还没成立的边缘划入 */
 export const FS_TWO_FINGER_MS = 200
 
 /** 底栏圆钮离手机左右缘的距离。贴边时按钮贴到屏幕边缘，这条不再留白 */

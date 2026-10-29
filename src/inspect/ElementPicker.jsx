@@ -30,6 +30,8 @@ const BUTTON = 48
 /** 跟手框和已选框的虚线。线宽 0.5，和遮罩洞共用同一组坐标 */
 const FRAME_STROKE = 'rgba(26, 140, 255, 0.95)'
 const FRAME_DASH = '3 2'
+/** 还没开始的队列选框。线宽仍是 0.5，只换成和序号同一档的灰 */
+const QUEUE_FRAME_CLASS = 'fill-none stroke-[#8e8e93]'
 function DiscardIcon() {
   return (
     // 多选放弃。只画这一条 path，不用 clipPath，避免 id 和别的图标撞上
@@ -91,6 +93,7 @@ function sameLoads(a, b) {
   return a.every(
     (item, i) =>
       item.key === b[i].key &&
+      item.n === b[i].n &&
       item.startedAt === b[i].startedAt &&
       item.rx === b[i].rx &&
       nearly(item.top, b[i].top) &&
@@ -110,6 +113,8 @@ function projectLoads(shapes, origin, pageEl) {
       const bounds = pathBounds(path)
       loads.push({
         key: shape.key,
+        // 轮次序号跟已选徽章同一套位置，自由形状也挂在包围盒角上
+        n: shape.n,
         path,
         top: bounds.top,
         left: bounds.left,
@@ -125,6 +130,7 @@ function projectLoads(shapes, origin, pageEl) {
     const rect = el.getBoundingClientRect()
     loads.push({
       key: shape.key,
+      n: shape.n,
       path: null,
       top: rect.top - origin.top,
       left: rect.left - origin.left,
@@ -221,12 +227,12 @@ function releasedOnChrome(x, y) {
 /**
  * 悬浮按钮 + 点选遮罩。
  * 轻点悬浮按钮进入多选；移动超过阈值或按住约 280ms 进入单选跟手。
- * 两指都在手机框内，连线中点落在页面上按住 200ms 走单选听写。全屏不支持，避免和右缘划入冲突。
+ * 两指都在手机框内，连线中点落在页面上按住 200ms 进入多选。全屏和生成中也能进；第二指落下会取消还没成立的边缘划入。
  * 底部输入框按住同样约 280ms：滑进页面走单选，没选中元素则只听写。
  * 多选确认后不退出：遮罩、已选高亮和序号都留着，可继续点下一个。
  * 单指从手机框左缘或右缘向内划进预览页，也进同一条单选听写；全屏同样支持。
  * 多选里拖过阈值则沿轨迹圈自由形状，松手收成自由选区；没超过仍是点击元素。
- * 已经在多选里时，两指滑动围成闭合选区：起点边、两侧轨迹、终点边。还没进多选时，非全屏双指长按走单选。
+ * 已经在多选里时，两指滑动围成闭合选区：起点边、两侧轨迹、终点边。还没进多选时，双指长按进入选择。
  * 输入卡片和键盘展开时，点页面只收起键盘，不确认新选区。
  */
 export default function ElementPicker({
@@ -251,6 +257,7 @@ export default function ElementPicker({
   onDiscard,
   deletingN = null,
   onBadgePress,
+  onRemoveQueuedShape,
   exitSelectRef,
 }) {
   const fabRef = useRef(null)
@@ -261,6 +268,7 @@ export default function ElementPicker({
 
   const [pins, setPins] = useState([]) // 已确认选区的实时矩形
   const [loadFrames, setLoadFrames] = useState([]) // 已发出、还在这一轮生成里的选区
+  const [armedQueueKey, setArmedQueueKey] = useState(null) // 等候序号的删除确认，一次只确认一颗
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
   const [fabSlot, setFabSlot] = useState(null)
   const [lasso, setLasso] = useState(null) // 正在画的自由形状，遮罩坐标
@@ -808,21 +816,13 @@ export default function ElementPicker({
       onDismiss: dismissGlass,
     })
 
-    // 全屏（phase 不是 off）这次双指长按不进单选也不进多选，避免和右缘划入冲突
-    const twoFingerLongPressBlocked = () => {
-      const phase = phoneRef.current?.getAttribute('data-fs-phase')
-      return (
-        (phase != null && phase !== 'off') ||
-        runningRef.current ||
-        activeRef.current ||
-        soloRef.current
-      )
-    }
+    // 已经在多选或单选里就不要再开一条。全屏和生成中不挡：第二指落下时边缘划入会被取消
+    const twoFingerLongPressBlocked = () => activeRef.current || soloRef.current
 
-    // 恰好两指都在手机框内，中点落在页面且不是系统按钮，按住满 200ms 才走单选听写
+    // 恰好两指都在手机框内，中点落在页面且不是系统按钮，按住满 200ms 进入多选
     const scheduleTwoFinger = () => {
       const point = twoFingerPoint()
-      // 提前松手、变成一指、中点离开页面、压到系统按钮，或已经在选/听写/运行中，都取消这 200ms，不发送
+      // 提前松手、变成一指、中点离开页面、压到系统按钮，或已经在选/听写，都取消这 200ms
       if (twoFingerLongPressBlocked() || !point) {
         clearTwoTimer()
         return
@@ -836,18 +836,17 @@ export default function ElementPicker({
         const next = twoFingerPoint()
         const ids = [...fingersRef.current.keys()]
         if (!next || ids.length !== 2) return
+        // 这两根手指松开时不再当成点击确认，选择模式留着
+        guardIdsRef.current = new Set(ids)
         blockClickRef.current = true
         window.clearTimeout(blockClickTimerRef.current)
-        // 这两根手指不再走按钮长按，也不再从输入框另开听写
         if (dragRef.current?.holdTimer) clearTimeout(dragRef.current.holdTimer)
         dragRef.current = null
         barHold.cancel()
         edgeSwipe.cancel()
-        // 先标上，这两根手指的 pointerup 不要再被输入框当成短按
         markBarHold(true)
-        // 中点当作按下位置：击中元素就是 DOM 单选并听写，没击中就是纯听写。松开仍走原来的单选发送
-        twoSoloRef.current = true
-        beginSolo(next.x, next.y)
+        twoSoloRef.current = false
+        enterRef.current(next.x, next.y)
       }, FS_TWO_FINGER_MS)
     }
 
@@ -925,8 +924,10 @@ export default function ElementPicker({
     }
 
     const onMove = (e) => {
-      // 单选已经成立才拦住滚动；成立前不 preventDefault，短按仍能聚焦
-      if ((soloRef.current || activeRef.current) && e.cancelable) e.preventDefault()
+      // 单选、多选，以及两指还在等 200ms 时，都拦住滚动，否则手机会把这次按住收成 pointercancel
+      const holdTwo =
+        fingersRef.current.size >= 2 && !soloRef.current && !activeRef.current
+      if ((soloRef.current || activeRef.current || holdTwo) && e.cancelable) e.preventDefault()
       const p = viewportPoint(e.clientX, e.clientY)
       const finger = fingersRef.current.get(e.pointerId)
       if (finger) {
@@ -1106,10 +1107,13 @@ export default function ElementPicker({
 
     // 输入框上的指针捕获在真机上经常丢 move，捕获阶段和 touchmove 再接一次
     const onTouchMove = (e) => {
-      if (!soloRef.current && !activeRef.current) return
+      const holdTwo =
+        fingersRef.current.size >= 2 && !soloRef.current && !activeRef.current
+      // 两指按住的这 200ms 也要拦触摸滚动，否则计时还没到就被取消
+      if (!soloRef.current && !activeRef.current && !holdTwo) return
       if (e.cancelable) e.preventDefault()
-      // 双指轨迹由 pointermove 按 pointerId 采样，这里不要再收成单指
-      if (twoStrokeRef.current) return
+      // 双指轨迹和双指长按的中点都由 pointermove 采样，这里不要改成第一根手指
+      if (twoStrokeRef.current || (twoSoloRef.current && e.touches.length >= 2)) return
       const t = e.touches[0]
       if (!t) return
       const point = viewportPoint(t.clientX, t.clientY)
@@ -1380,6 +1384,14 @@ export default function ElementPicker({
     </button>
   )
 
+  // 已经开始的那一轮只走点阵。还在队列里的留选区框，序号是队列位置减 1
+  const runningFrames = []
+  const waitingFrames = []
+  for (const frame of loadFrames) {
+    if (frame.startedAt) runningFrames.push(frame)
+    else waitingFrames.push(frame)
+  }
+
   return (
     <>
     <div ref={overlayRef} className="pointer-events-none absolute inset-0 z-20" data-inspect-ui>
@@ -1529,7 +1541,46 @@ export default function ElementPicker({
         />
       )}
 
-      {loadFrames.length > 0 ? <SelectionLoading frames={loadFrames} runMs={runMs} /> : null}
+      {runningFrames.length > 0 ? <SelectionLoading frames={runningFrames} runMs={runMs} /> : null}
+
+      {waitingFrames.length > 0 && phoneWidth > 0 && phoneHeight > 0 ? (
+        <svg
+          data-inspect-queue=""
+          aria-hidden="true"
+          width={phoneWidth}
+          height={phoneHeight}
+          className="pointer-events-none absolute left-0 top-0"
+          style={{ width: phoneWidth, height: phoneHeight }}
+        >
+          {waitingFrames.map((frame) =>
+            frame.path?.length ? (
+              <path
+                key={frame.key}
+                data-inspect-frame=""
+                data-free-path=""
+                d={freePathD(frame.path)}
+                className={QUEUE_FRAME_CLASS}
+                strokeWidth="0.5"
+                strokeDasharray={FRAME_DASH}
+              />
+            ) : (
+              <rect
+                key={frame.key}
+                data-inspect-frame=""
+                x={frame.left}
+                y={frame.top}
+                width={Math.max(frame.width, 0)}
+                height={Math.max(frame.height, 0)}
+                rx={frame.rx}
+                ry={frame.rx}
+                className={QUEUE_FRAME_CLASS}
+                strokeWidth="0.5"
+                strokeDasharray={FRAME_DASH}
+              />
+            ),
+          )}
+        </svg>
+      ) : null}
 
       {pins.map((pin) => {
         const pos = badgePosition(pin, phoneWidth, phoneHeight)
@@ -1568,6 +1619,55 @@ export default function ElementPicker({
               </svg>
             ) : (
               pin.n
+            )}
+          </button>
+        )
+      })}
+
+      {waitingFrames.map((frame) => {
+        // 进行中的那一轮不进这个列表。数字是队列位置减 1，同一轮的选区相同
+        if (frame.n == null || frame.n < 1) return null
+        const pos = badgePosition(frame, phoneWidth, phoneHeight)
+        // 和多选序号一样：一次只确认一颗。点这一颗第二次才删，点另一颗改确认到那一颗
+        const deleting = armedQueueKey === frame.key
+        return (
+          <button
+            key={`queue-badge-${frame.key}`}
+            type="button"
+            data-inspect-ui
+            data-inspect-badge=""
+            aria-label={`第${frame.n}轮`}
+            className={cn(
+              // 和点选序号同一颗：指向角 4px，其余角全圆。排队白底灰字
+              // 描边和投影跟点阵遮罩同一档：0.5px 浅边，大而柔的投影
+              // 第一次只换成多选那套淡红底和红叉，挡住冒泡，不进入点选、不展开输入
+              'pointer-events-auto absolute z-30 flex items-center justify-center border-[0.5px] border-black/8 p-0 text-[15px] font-light leading-none shadow-[0_1px_24px_0_rgb(0_0_0/0.06)]',
+              badgeRadiusClass(pos, frame),
+              deleting ? 'bg-[#ffc2c2] text-[#ff3b30]' : 'bg-white text-[#8e8e93]',
+            )}
+            style={{ top: pos.top, left: pos.left, width: BADGE, height: BADGE }}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return
+              e.preventDefault()
+              e.stopPropagation()
+              if (armedQueueKey !== frame.key) {
+                setArmedQueueKey(frame.key)
+                return
+              }
+              setArmedQueueKey(null)
+              onRemoveQueuedShape?.(frame.key)
+            }}
+          >
+            {deleting ? (
+              // 和多选序号同一枚叉，颜色跟文字走
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path
+                  d="M15.5999 3.51655C15.7171 3.39934 15.8761 3.3335 16.0418 3.3335C16.387 3.3335 16.6668 3.61332 16.6668 3.9585C16.6668 4.12425 16.601 4.28323 16.4837 4.40057L10.884 10.0002L16.4838 15.5999C16.601 15.7171 16.6668 15.8761 16.6668 16.0418C16.6668 16.387 16.387 16.6668 16.0418 16.6668C15.8761 16.6668 15.7171 16.601 15.5999 16.4838L10.0002 10.884L4.40044 16.4838C4.28323 16.601 4.12425 16.6668 3.9585 16.6668C3.61332 16.6668 3.3335 16.387 3.3335 16.0418C3.3335 15.8761 3.39935 15.7171 3.51655 15.5999L3.51708 15.5994L9.11629 10.0002L3.51655 4.40044C3.39934 4.28323 3.3335 4.12425 3.3335 3.9585C3.3335 3.61332 3.61332 3.3335 3.9585 3.3335C4.12425 3.3335 4.28323 3.39934 4.40057 3.51668L10.0002 9.11629L15.5999 3.51655Z"
+                  fill="currentColor"
+                />
+              </svg>
+            ) : (
+              frame.n
             )}
           </button>
         )

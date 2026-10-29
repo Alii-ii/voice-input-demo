@@ -121,6 +121,30 @@ export default function InspectLab() {
     beginHead()
   }
 
+  // 点等候序号删掉这一个选框。正在跑的那一轮没有 tag，这里也不动它的计时
+  // 同一轮还剩别的选框就留着，序号不变。删光才整轮移出，后面按新位置再减 1
+  const removeQueuedShape = (key) => {
+    if (!key) return
+    const next = []
+    let changed = false
+    for (const run of runQueueRef.current) {
+      if (run.startedAt) {
+        next.push(run)
+        continue
+      }
+      const shapes = run.shapes.filter((shape) => shape.key !== key)
+      if (shapes.length === run.shapes.length) {
+        next.push(run)
+        continue
+      }
+      changed = true
+      if (shapes.length) next.push({ ...run, shapes })
+    }
+    if (!changed) return
+    runQueueRef.current = next
+    setRunQueue(next)
+  }
+
   const stopRunning = () => {
     window.clearTimeout(runTimerRef.current)
     runTimerRef.current = 0
@@ -297,11 +321,14 @@ export default function InspectLab() {
   }
 
   // 队列里每一轮的选区都留着，进度从该轮真正开始跑才走
+  // 序号是当前队列位置（从 1 开始）再减 1。正在跑的是第 1 项，减完是 0，那边不画序号
+  // 紧挨着的下一轮显示 1。同一轮的每个选区共用。队头移出后按剩下的位置再减 1
   const loadingShapes = useMemo(
     () =>
-      runQueue.flatMap((run) =>
+      runQueue.flatMap((run, roundIndex) =>
         run.shapes.map((shape) => ({
           key: shape.key,
+          n: roundIndex + 1 - 1,
           el: shape.el,
           free: shape.free,
           startedAt: run.startedAt,
@@ -398,6 +425,7 @@ export default function InspectLab() {
             if (armedRef.current != null) removeSelection(armedRef.current)
           }}
           onBadgePress={selectMode === 'multi' ? onTagPress : undefined}
+          onRemoveQueuedShape={removeQueuedShape}
           exitSelectRef={exitSelectRef}
         />
         <DeviceFrame
@@ -413,6 +441,7 @@ export default function InspectLab() {
           }}
           onStop={stopRunning}
           onInsert={onInsert}
+          onSend={onSend}
           fsPhase={phase}
           fsEntering={entering}
           onToggleFullscreen={toggle}
