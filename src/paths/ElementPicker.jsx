@@ -10,7 +10,6 @@ import {
   FS_DOCK_MS,
   FS_EDGE_RADIUS,
   FS_ENTER_MS,
-  FS_TWO_FINGER_MS,
 } from './previewFullscreen.js'
 import { pointOnInspectChrome, resolveTwoFingerPoint } from './twoFingerPick.js'
 import { viewportPoint } from './viewportPoint.js'
@@ -24,8 +23,15 @@ import {
 } from './freeSelectPath.js'
 import { SelectionLoading } from './SelectionLoading.jsx'
 import { allowsEntry } from './entryAllows.js'
+import { CORNER_RADIUS } from './corners/CornerBracket.jsx'
 import { FollowTag } from './schemes/longPressTag.jsx'
-import { TwoFingerOverlay, twoFingerDefaults } from './schemes/twoFingerSelect.jsx'
+import {
+  TwoFingerOverlay,
+  overlayRectToPageRatio,
+  pageRatioRectToOverlay,
+  twoFingerDefaults,
+  twoFingerRect,
+} from './schemes/twoFingerSelect.jsx'
 
 /** 与悬浮按钮同尺寸，未吸附时选框保持这个大小 */
 const BUTTON = 48
@@ -127,6 +133,22 @@ function projectLoads(shapes, origin, pageEl) {
         width: bounds.width,
         height: bounds.height,
         rx: 0,
+        startedAt: shape.startedAt || 0,
+      })
+      continue
+    }
+    // 链路 3 交出去的是方框比例，不是自由路径，也不是元素
+    if (shape.box && pageEl) {
+      const rect = pageRatioRectToOverlay(shape.box, pageEl, origin)
+      loads.push({
+        key: shape.key,
+        n: shape.n,
+        path: null,
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+        rx: CORNER_RADIUS,
         startedAt: shape.startedAt || 0,
       })
       continue
@@ -233,12 +255,11 @@ function releasedOnChrome(x, y) {
 /**
  * 悬浮按钮 + 点选遮罩。
  * 轻点悬浮按钮进入多选；移动超过阈值或按住约 280ms 进入单选跟手。
- * 两指都在手机框内，连线中点落在页面上按住 200ms 进入多选。全屏和生成中也能进；第二指落下会取消还没成立的边缘划入。
+ * 链路 3：两指都在手机框内，中点落在页面上且不是系统按钮时，按下就进单选听写。方框是选区，松开交给 onSoloFinish。不再等 200ms，也不沿轨迹围自由路径。第二指落下会取消还没成立的边缘划入。
  * 底部输入框按住同样约 280ms：滑进页面走单选，没选中元素则只听写。
  * 多选确认后不退出：遮罩、已选高亮和序号都留着，可继续点下一个。
  * 单指从手机框左缘或右缘向内划进预览页，也进同一条单选听写；全屏同样支持。
  * 多选里拖过阈值则沿轨迹圈自由形状，松手收成自由选区；没超过仍是点击元素。
- * 已经在多选里时，两指滑动围成闭合选区：起点边、两侧轨迹、终点边。还没进多选时，双指长按进入选择。
  * 输入卡片和键盘展开时，点页面只收起键盘，不确认新选区。
  */
 export default function ElementPicker({
@@ -335,7 +356,8 @@ export default function ElementPicker({
   const fingersRef = useRef(new Map())
   const twoTimerRef = useRef(0)
   const twoGenRef = useRef(0)
-  const twoSoloRef = useRef(false) // 这次单选是双指长按开的，松手仍按中点吸附，不改去单指坐标
+  const twoSoloRef = useRef(false) // 链路 3 这次单选由双指按下开的，松手交方框，不改去单指吸附
+  const twoBoxRef = useRef(null) // 两指撑开的矩形，页面内容比例，松手时交给 onSoloFinish
   const guardIdsRef = useRef(new Set())
   const blockClickRef = useRef(false)
   const blockClickTimerRef = useRef(0)
@@ -514,6 +536,7 @@ export default function ElementPicker({
     document.documentElement.style.touchAction = ''
     soloRef.current = false
     twoSoloRef.current = false
+    twoBoxRef.current = null
     lastSoloElRef.current = null
     snappedRef.current = null
     pointRef.current = null
@@ -697,6 +720,8 @@ export default function ElementPicker({
     }
 
     const tryBeginTwoStroke = () => {
+      // 链路 3 的选区是两指撑开的矩形，不再沿两侧轨迹围自由路径
+      if (schemeRef.current === 'two-finger') return
       if (!allowsRef.current('two-finger')) return
       if (twoStrokeRef.current || !activeRef.current || soloRef.current || editingRef.current) return
       const ids = []
@@ -842,49 +867,70 @@ export default function ElementPicker({
     })
 
     // 已经在多选或单选里就不要再开一条。全屏和生成中不挡：第二指落下时边缘划入会被取消
-    const twoFingerLongPressBlocked = () => activeRef.current || soloRef.current
 
-    // 恰好两指都在手机框内，中点落在页面且不是系统按钮，按住满 200ms 进入多选
+    // 链路 3：第二指按下、中点落在页面上就进单选听写。不再等 200ms，也不进多选
     const scheduleTwoFinger = () => {
       if (!allowsRef.current('two-finger')) {
         clearTwoTimer()
         return
       }
-      const point = twoFingerPoint()
-      // 提前松手、变成一指、中点离开页面、压到系统按钮，或已经在选/听写，都取消这 200ms
-      if (twoFingerLongPressBlocked() || !point) {
+      if (soloRef.current || activeRef.current) {
         clearTwoTimer()
         return
       }
-      if (twoTimerRef.current) return
-      const gen = twoGenRef.current
-      twoTimerRef.current = window.setTimeout(() => {
-        twoTimerRef.current = 0
-        if (gen !== twoGenRef.current) return
-        if (twoFingerLongPressBlocked()) return
-        const next = twoFingerPoint()
-        const ids = [...fingersRef.current.keys()]
-        if (!next || ids.length !== 2) return
-        // 这两根手指松开时不再当成点击确认，选择模式留着
-        guardIdsRef.current = new Set(ids)
-        blockClickRef.current = true
-        window.clearTimeout(blockClickTimerRef.current)
-        if (dragRef.current?.holdTimer) clearTimeout(dragRef.current.holdTimer)
-        dragRef.current = null
-        barHold.cancel()
-        edgeSwipe.cancel()
-        markBarHold(true)
-        twoSoloRef.current = false
-        enterRef.current(next.x, next.y)
-      }, FS_TWO_FINGER_MS)
+      const point = twoFingerPoint()
+      // 少一指、中点离开页面或压到系统按钮，都不开始
+      if (!point) {
+        clearTwoTimer()
+        return
+      }
+      clearTwoTimer()
+      twoSoloRef.current = true
+      blockClickRef.current = true
+      window.clearTimeout(blockClickTimerRef.current)
+      if (dragRef.current?.holdTimer) clearTimeout(dragRef.current.holdTimer)
+      dragRef.current = null
+      barHold.cancel()
+      edgeSwipe.cancel()
+      markBarHold(true)
+      beginSolo(point.x, point.y)
+      rememberTwoBox()
     }
 
-    // 方案 3 不在这里画矩形，只把两指相对遮罩的坐标交给 TwoFingerOverlay
+    // 把当前两指方框收成页面比例。手指还没凑满两根时不覆盖上一次
+    const rememberTwoBox = () => {
+      if (schemeRef.current !== 'two-finger') return
+      const overlay = overlayRef.current?.getBoundingClientRect()
+      const page = pageRef.current
+      const fingers = [...fingersRef.current.values()]
+      if (!overlay || !page || fingers.length < 2) return
+      const a = { x: fingers[0].x - overlay.left, y: fingers[0].y - overlay.top }
+      const b = { x: fingers[1].x - overlay.left, y: fingers[1].y - overlay.top }
+      twoBoxRef.current = overlayRectToPageRatio(twoFingerRect(a, b), overlay, page)
+    }
+
+    // 松开时结束这次单选听写，把方框交给 onSoloFinish。空内容由那边决定不入队
+    const finishArmedTwoFinger = () => {
+      if (schemeRef.current !== 'two-finger' || !twoSoloRef.current || !soloRef.current) return false
+      const box = twoBoxRef.current
+      endSolo(false)
+      onSoloFinishRef.current?.(box ? { box } : null)
+      if (fingersRef.current.size === 0) markBarHold(false)
+      if (blockClickRef.current) {
+        window.clearTimeout(blockClickTimerRef.current)
+        blockClickTimerRef.current = window.setTimeout(() => {
+          blockClickRef.current = false
+        }, 80)
+      }
+      return true
+    }
+
+    // 链路 3 只在单选听写期间把两指方框交给覆盖层，并记下页面比例
     const syncTwoFingers = () => {
       if (schemeRef.current !== 'two-finger') return
       const overlay = overlayRef.current?.getBoundingClientRect()
-      if (!overlay || fingersRef.current.size === 0) {
-        setTwoFingers([])
+      if (!overlay || !twoSoloRef.current || fingersRef.current.size < 2) {
+        setTwoFingers((prev) => (prev.length === 0 ? prev : []))
         return
       }
       setTwoFingers(
@@ -893,6 +939,7 @@ export default function ElementPicker({
           y: item.y - overlay.top,
         })),
       )
+      rememberTwoBox()
     }
 
     const onFingerDown = (e) => {
@@ -904,9 +951,10 @@ export default function ElementPicker({
       const blocked =
         e.target instanceof Element &&
         e.target.closest('[data-inspect-badge], [data-element-tag], [data-inspect-chrome]')
-      // 已经在多选里、且这指落在预览页上，才记下这侧轨迹。还没进多选时仍走双指长按
+      // 链路 3 不记轨迹。其他方案仍只在多选里、且这指落在预览页上才记下这一侧
       const overlay = overlayRef.current?.getBoundingClientRect()
       if (
+        schemeRef.current !== 'two-finger' &&
         overlay &&
         !blocked &&
         activeRef.current &&
@@ -940,7 +988,7 @@ export default function ElementPicker({
         lassoRef.current = null
       }
       tryBeginTwoStroke()
-      // 第二指落下就放弃边缘划入，留给双指长按和双指围区
+      // 第二指落下就放弃边缘划入，这条手势改走双指单选
       if (fingersRef.current.size > 1) {
         edgeSwipe.cancel()
       } else if (!blocked) {
@@ -1034,12 +1082,16 @@ export default function ElementPicker({
 
     // 松开时才确认多选。单选松手交给父级发送，不插入选区序号
     const onUp = (e) => {
+      // 先记下两指还在时的方框，再从手指表里拿掉这一根
+      if (twoSoloRef.current) rememberTwoBox()
       const p = viewportPoint(e.clientX, e.clientY)
       const twoResult = takeTwoStroke(e.pointerId, p.x, p.y)
       edgeSwipe.up(e.pointerId)
       const guarded = releaseFinger(e)
       const barResult = barHold.up(e.pointerId)
       if (barResult !== 'none') markBarHold(false)
+      // 链路 3 松开就结束单选听写并发送，不落到多选确认
+      if (finishArmedTwoFinger()) return
       if (twoResult === 'commit' || twoResult === 'consumed') {
         pagePressRef.current = false
         lassoOriginRef.current = null
@@ -1145,11 +1197,14 @@ export default function ElementPicker({
     }
 
     const onCancel = (e) => {
+      if (twoSoloRef.current) rememberTwoBox()
       const p = viewportPoint(e.clientX, e.clientY)
       const twoResult = takeTwoStroke(e.pointerId, p.x, p.y)
       edgeSwipe.cancel()
       releaseFinger(e)
       if (barHold.up(e.pointerId) !== 'none') markBarHold(false)
+      // 指针被取消也算这次双指松开，避免听写停不下来
+      if (finishArmedTwoFinger()) return
       if (twoResult === 'commit' || twoResult === 'consumed') return
       if (fingersRef.current.size === 0 && lassoRef.current) {
         lassoOriginRef.current = null
@@ -1322,8 +1377,8 @@ export default function ElementPicker({
     return () => cancelAnimationFrame(id)
   }, [locked])
   // 拖拽过程中遮罩仍是整页矩形，只按进度改透明度
-  // 单指长按的选区是 FollowTag，不再铺点选遮罩
-  const showMask = scheme !== 'long-press' && (locked || edgeDragging)
+  // 单指长按的选区是 FollowTag，不再铺点选遮罩。链路 3 的高亮在方框里，也不铺整页遮罩
+  const showMask = scheme !== 'long-press' && scheme !== 'two-finger' && (locked || edgeDragging)
   const veilProgress = edgeDragging
     ? (edgeFx.progress || 0)
     : locked

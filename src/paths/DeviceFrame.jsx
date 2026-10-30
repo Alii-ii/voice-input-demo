@@ -262,12 +262,14 @@ export default function DeviceFrame({
         </CircleButton>
         {selectMode ? (
           <>
-            {/* 选择态标题用细字重，颜色和位置不动。链路 4 只把字色改成黑，其余方案仍是白字 */}
+            {/* 选择态标题用细字重，颜色和位置不动。链路 4 字色是黑且去掉投影，其余方案仍是白字带投影 */}
             <p
               data-select-title=""
               className={
-                'pointer-events-none absolute left-16 right-16 top-1/2 -translate-y-1/2 text-center text-[19px] font-light tracking-[-0.01em] drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)] ' +
-                (scheme === 'long-press' ? 'text-black' : 'text-white')
+                'pointer-events-none absolute left-16 right-16 top-1/2 -translate-y-1/2 text-center text-[19px] font-light tracking-[-0.01em] ' +
+                (scheme === 'long-press'
+                  ? 'text-black'
+                  : 'text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]')
               }
             >
               {selectMode === 'solo' ? '选择元素, 松开发送' : '选择元素'}

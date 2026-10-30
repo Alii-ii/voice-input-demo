@@ -113,6 +113,8 @@ export default function InspectLab({ scheme = 'click' }) {
         key: `${id}-${index}`,
         el: shape.el || null,
         free: shape.free?.length ? shape.free.map((point) => ({ x: point.x, y: point.y })) : null,
+        // 链路 3 的选区是方框比例。其他方案不带这个字段
+        box: shape.box ? { x: shape.box.x, y: shape.box.y, w: shape.box.w, h: shape.box.h } : null,
       })),
     }
     const next = [...runQueueRef.current, item]
@@ -320,6 +322,15 @@ export default function InspectLab({ scheme = 'click' }) {
       if (message) enqueueRun(message, [])
       return
     }
+    // 链路 3：方框是这次单选的选区。没有识别文字就不入队，不改其他方案
+    if (scheme === 'two-finger') {
+      const message = formatSoloMessage(null, cur?.speech || '')
+      soloRef.current = null
+      setSoloDraft(null)
+      const shapes = info?.box ? [{ el: null, free: null, box: info.box }] : []
+      if (message) enqueueRun(message, shapes)
+      return
+    }
     const tag = info ? { text: info.text, summary: info.summary } : null
     const message = formatSoloMessage(tag, cur?.speech || '')
     soloRef.current = null
@@ -353,6 +364,7 @@ export default function InspectLab({ scheme = 'click' }) {
           n: roundIndex + 1 - 1,
           el: shape.el,
           free: shape.free,
+          box: shape.box,
           startedAt: run.startedAt,
         })),
       ),
@@ -370,12 +382,31 @@ export default function InspectLab({ scheme = 'click' }) {
 
   return (
     <div
+      data-long-press-root={scheme === 'long-press' ? '' : undefined}
       className={cn(
         'flex min-h-0 items-center justify-center gap-10 px-5 py-4',
         // 窄屏用动态视口高度，避免 100vh 把整页撑到地址栏下面
         mobileStage ? 'h-dvh overflow-hidden' : 'h-full',
+        // 链路 4 整页文字不可选，避免移动端长按弹出放大镜。输入框仍可选，打字不受影响
+        scheme === 'long-press' &&
+          'select-none [&_textarea]:select-text [&_input]:select-text',
       )}
     >
+      {scheme === 'long-press' ? (
+        // Tailwind 会丢掉 -webkit-touch-callout 这条任意属性，所以只在链路 4 挂这一小段
+        <style>{`
+          [data-long-press-root],
+          [data-long-press-root] :not(textarea):not(input) {
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+          }
+          [data-long-press-root] textarea,
+          [data-long-press-root] input {
+            -webkit-user-select: text;
+            -webkit-touch-callout: default;
+          }
+        `}</style>
+      ) : null}
       <div
         ref={phoneRef}
         data-fs-phase={phase}
