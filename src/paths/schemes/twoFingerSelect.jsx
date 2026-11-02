@@ -6,7 +6,7 @@ export function twoFingerAllows(entry) {
   return entry === 'two-finger'
 }
 
-/** 不进全屏。矩形只由两指撑开，不铺满遮罩 */
+/** 不进全屏。周围遮罩由双指选框自己挖洞，不走点选那张带虚线的整页遮罩 */
 export function twoFingerDefaults() {
   return { fullscreen: false }
 }
@@ -62,25 +62,68 @@ export function pageRatioRectToOverlay(ratio, pageEl, origin) {
 /**
  * 双指选框。fingerA / fingerB 相对覆盖层。
  * 页面若仍把两点放在 fingers 里，取前两点当对角。
+ * 周围是点选那层 MASK_SCRIM，方框按 8px 圆角挖空。
+ * 点选选区洞的填充是 none，框内不再铺颜色，露出的内容就是高亮。
  */
-export function TwoFingerOverlay({ fingerA, fingerB, fingers }) {
+export function TwoFingerOverlay({ fingerA, fingerB, fingers, width, height }) {
   const a = readFinger(fingerA) ?? readFinger(fingers?.[0])
   const b = readFinger(fingerB) ?? readFinger(fingers?.[1])
   if (!a || !b) return null
   const rect = twoFingerRect(a, b)
+  const frameW = Number(width) || 0
+  const frameH = Number(height) || 0
   return (
     <div className="pointer-events-none absolute inset-0">
+      {frameW > 0 && frameH > 0 ? (
+        <svg
+          aria-hidden="true"
+          width={frameW}
+          height={frameH}
+          className="pointer-events-none absolute left-0 top-0"
+          style={{ width: frameW, height: frameH }}
+        >
+          <defs>
+            {/* 白底留住周围遮罩，黑色圆角矩形把选区挖空。圆角和角标外弧同一个数 */}
+            <mask
+              id="two-finger-scrim-mask"
+              maskUnits="userSpaceOnUse"
+              maskContentUnits="userSpaceOnUse"
+              x="0"
+              y="0"
+              width={frameW}
+              height={frameH}
+            >
+              <rect x="0" y="0" width={frameW} height={frameH} fill="white" />
+              <rect
+                x={rect.left}
+                y={rect.top}
+                width={Math.max(rect.width, 0)}
+                height={Math.max(rect.height, 0)}
+                rx={CORNER_RADIUS}
+                ry={CORNER_RADIUS}
+                fill="black"
+              />
+            </mask>
+          </defs>
+          <rect
+            x="0"
+            y="0"
+            width={frameW}
+            height={frameH}
+            fill={MASK_SCRIM}
+            mask="url(#two-finger-scrim-mask)"
+          />
+        </svg>
+      ) : null}
       <div
-        className="absolute overflow-hidden border-0"
+        className="absolute overflow-hidden border-0 bg-transparent"
         style={{
           left: rect.left,
           top: rect.top,
           width: rect.width,
           height: rect.height,
-          // 圆角跟角标外弧同一个值，角标被裁在选框内
+          // 圆角跟角标外弧、挖空边缘同一个值，角标被裁在选框内
           borderRadius: CORNER_RADIUS,
-          // 框内跟点选遮罩同一套颜色，不另铺淡蓝
-          backgroundColor: MASK_SCRIM,
         }}
       >
         <CornerBracket />

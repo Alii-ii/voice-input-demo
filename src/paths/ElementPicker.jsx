@@ -1377,7 +1377,7 @@ export default function ElementPicker({
     return () => cancelAnimationFrame(id)
   }, [locked])
   // 拖拽过程中遮罩仍是整页矩形，只按进度改透明度
-  // 单指长按的选区是 FollowTag，不再铺点选遮罩。链路 3 的高亮在方框里，也不铺整页遮罩
+  // 单指长按的选区是 FollowTag，不再铺点选遮罩。链路 3 的遮罩在双指选框里挖洞，不走这张带虚线的点选遮罩
   const showMask = scheme !== 'long-press' && scheme !== 'two-finger' && (locked || edgeDragging)
   const veilProgress = edgeDragging
     ? (edgeFx.progress || 0)
@@ -1608,6 +1608,15 @@ export default function ElementPicker({
           )}
         </svg>
       )}
+      {scheme === 'two-finger' ? (
+        <TwoFingerOverlay
+          {...twoFingerDefaults()}
+          fingers={twoFingers}
+          active={active || solo}
+          width={phoneWidth}
+          height={phoneHeight}
+        />
+      ) : null}
       {drop && edgeFx && (
         <EdgeSwipeDrop
           side={drop.side}
@@ -1796,15 +1805,6 @@ export default function ElementPicker({
         )
       })}
 
-      {scheme === 'two-finger' ? (
-        <TwoFingerOverlay
-          {...twoFingerDefaults()}
-          fingers={twoFingers}
-          active={active || solo}
-          width={phoneWidth}
-          height={phoneHeight}
-        />
-      ) : null}
       {scheme === 'long-press' && followPoint ? (
         <FollowTag x={followPoint.x} y={followPoint.y} />
       ) : null}
