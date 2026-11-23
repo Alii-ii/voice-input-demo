@@ -65,7 +65,7 @@ Error generating stack: `+o.message+`
   cursor: pointer;
 }
 .au-widget img { display: block; }
-.au-trigger, .au-update, .au-id { padding: 0; }
+.au-trigger, .au-update, .au-copy-id { padding: 0; }
 .au-widget .au-update { background-color: rgb(124 108 255 / 8%); }
 .au-widget .au-update:hover { background-color: rgb(124 108 255 / 16%); }
 .au-widget .au-action { font-size: 12px; }
@@ -105,7 +105,7 @@ Error generating stack: `+o.message+`
   line-height: 1.2;
   transition: top 200ms ease-out, font-size 200ms ease-out;
 }
-.au-widget[data-open='true'] .au-name { top: -5px; font-size: 12px; }
+.au-widget[data-open='true'] .au-name { top: -7px; font-size: 12px; }
 .au-widget[data-open='true'] :is(.au-name, .au-id) {
   transition-duration: 150ms;
   transition-timing-function: var(--au-open-curve);
@@ -285,7 +285,6 @@ Error generating stack: `+o.message+`
 .au-action:hover { background: rgb(25 29 37 / 3%); }
 .au-shortcut { color: rgb(25 29 37 / 45%); }
 .au-action[data-action='logout']:hover { background: rgba(219, 59, 75, 0.05); }
-.au-id { position: absolute; z-index: 2; left: 45px; bottom: 10px; display: flex; align-items: center; gap: 2px; font-size: 10px; line-height: 12px; }
 .au-row { pointer-events: none; }
 .au-trigger, .au-update { pointer-events: auto; }
 .au-widget :is(.au-actions, .au-action-list, .au-name, .au-id, .au-settings-avatar, .au-settings-avatar img + img) {
@@ -295,8 +294,14 @@ Error generating stack: `+o.message+`
   .au-widget[data-open] *, .au-widget[data-open] .au-panel { transition: none !important; }
 }
 .au-id {
-  bottom: 5px;
+  position: absolute;
+  z-index: 2;
+  top: calc(50% + 12px / 2 * 1.2 - 7px + 2px);
   left: 40px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  line-height: 12px;
   opacity: 0;
   transform: translateY(3px);
   pointer-events: none;
@@ -305,9 +310,9 @@ Error generating stack: `+o.message+`
 .au-widget[data-open='true'] .au-id {
   opacity: 1;
   transform: translateY(0);
-  pointer-events: auto;
 }
-`,g4=[["活动额度","12月1日",100,!0],["加油包","用完即止",71],["订阅额度","12月1日",38]],M4=[["logout","退出登录","imgIconLogIn"],["settings","系统设置","imgIconSetting"],["account","账号设置","imgIconMenber"]];function en({name:e,size:t=16,width:n=t,height:r=t}){return s.jsx("img",{alt:"",width:n,height:r,src:f4[e],draggable:!1})}const h4=[["top","imgEllipse9",20.2383,5.38084,"imgTop",28,9,"加油包 · 71% · 用完即止"],["right","imgRIght",14,20,"imgRIght1",15,20.5318,"活动额度 · 100% · 12月1日结束"],["left","imgLeft",14,20,"imgLeft1",15,20.5318,"订阅额度 · 38% · 12月1日重置"]];function x4({active:e,initial:t}){return s.jsxs("span",{className:"au-avatar","data-active":e,children:[s.jsx(en,{name:"imgFigureStepfun",size:18}),s.jsxs("span",{className:"au-settings-avatar","aria-hidden":"true",children:[s.jsx(en,{name:"imgFigureStepfun1",size:22}),s.jsx(en,{name:"imgFigureStepfun2",size:28})]}),s.jsx("b",{children:t}),!e&&h4.map(([n,r,i,o,l,u,a,c])=>s.jsxs("span",{className:"au-region au-"+n,children:[s.jsxs("span",{className:"au-arc-base",children:[s.jsx(en,{name:r,width:i,height:o}),n==="top"&&s.jsx(en,{name:"imgEllipse12",width:8.11687,height:5.09195})]}),s.jsx("span",{className:"au-arc-highlight",children:s.jsx(en,{name:l,width:u,height:a})}),s.jsxs("span",{className:"au-avatar-tooltip",role:"tooltip",children:[c,s.jsx("span",{className:"au-tooltip-arrow",children:s.jsx(en,{name:"imgVector",width:10,height:5})})]})]},n))]})}function m4({name:e,accountId:t,onAction:n}){const[r,i]=d.useState(!1),[o,l]=d.useState(!1),u=d.useRef(null),a=d.useRef(null),c=d.useId();d.useEffect(()=>{if(!r)return;const x=m=>{u.current.contains(m.target)||i(!1)},w=m=>{m.key==="Escape"&&(i(!1),a.current.focus())};return document.addEventListener("pointerdown",x),document.addEventListener("keydown",w),()=>{document.removeEventListener("pointerdown",x),document.removeEventListener("keydown",w)}},[r]);async function g(){try{await navigator.clipboard.writeText(t),l(!0)}catch{l(!1)}}function h(){l(!1),i(!r)}return s.jsxs("div",{ref:u,className:"au-widget","data-open":r,"data-node-id":"24826:27663",children:[s.jsx("style",{children:p4}),s.jsxs("div",{className:"au-panel",id:c,"aria-hidden":!r,children:[s.jsxs("section",{className:"au-glass au-usage","aria-label":"用量与套餐",children:[s.jsxs("button",{className:"au-action au-usage-action",type:"button",tabIndex:r?0:-1,onClick:()=>n==null?void 0:n("usage"),children:[s.jsx(en,{name:"imgUsageDashboard"}),"用量与套餐",s.jsx("span",{className:"au-action-trailing",children:s.jsx(en,{name:"imgUsageArrow",size:14})})]}),g4.map(([x,w,m,N])=>s.jsxs("div",{className:"au-quota",children:[s.jsxs("div",{className:"au-quota-title",children:[x,s.jsxs("span",{className:"au-muted",children:["· ",w]}),N&&s.jsx("span",{className:"au-priority",children:"优先"}),s.jsxs("span",{className:"au-percent",children:[m,"%"]})]}),s.jsx("div",{className:"au-meter","aria-hidden":"true",children:s.jsx("span",{style:{"--au-fill":m+"%"}})})]},x))]}),s.jsx("section",{className:"au-glass au-actions","aria-label":"账号操作",children:s.jsx("div",{className:"au-action-list",children:M4.map(([x,w,m])=>s.jsxs("button",{type:"button",className:"au-action","data-action":x,tabIndex:r?0:-1,onClick:()=>n==null?void 0:n(x),children:[s.jsx(en,{name:m}),w,x==="account"&&s.jsx("span",{className:"au-action-trailing",children:s.jsx(en,{name:"imgUsageArrow",size:14})}),x==="settings"&&s.jsx("span",{className:"au-action-trailing au-shortcut","aria-hidden":"true",children:"⌘,"})]},x))})})]}),s.jsxs("div",{className:"au-row",children:[s.jsxs("button",{ref:a,className:"au-trigger",type:"button","aria-expanded":r,"aria-controls":c,"aria-label":e+"，账号与用量",onClick:h,children:[s.jsx(x4,{active:r,initial:e.slice(0,1)}),s.jsx("span",{className:"au-name",children:e})]}),s.jsxs("button",{className:"au-id",type:"button",onClick:g,tabIndex:r?0:-1,"aria-hidden":!r,"aria-label":"复制账号 ID "+t,children:[s.jsx("span",{children:o?"已复制":"ID: "+t}),s.jsx(en,{name:"imgIconCopy",size:10})]}),s.jsx("button",{className:"au-update",type:"button","aria-label":"下载更新",onClick:()=>n==null?void 0:n("update"),children:s.jsx(en,{name:"imgIconDownload"})})]})]})}const y4=`import React, { useEffect, useId, useRef, useState } from 'react'
+.au-widget[data-open='true'] .au-copy-id { pointer-events: auto; }
+`,g4=[["活动额度","12月1日",100,!0],["加油包","用完即止",71],["订阅额度","12月1日",38]],M4=[["logout","退出登录","imgIconLogIn"],["settings","系统设置","imgIconSetting"],["account","账号设置","imgIconMenber"]];function en({name:e,size:t=16,width:n=t,height:r=t}){return s.jsx("img",{alt:"",width:n,height:r,src:f4[e],draggable:!1})}const h4=[["top","imgEllipse9",20.2383,5.38084,"imgTop",28,9,"加油包 · 71% · 用完即止"],["right","imgRIght",14,20,"imgRIght1",15,20.5318,"活动额度 · 100% · 12月1日结束"],["left","imgLeft",14,20,"imgLeft1",15,20.5318,"订阅额度 · 38% · 12月1日重置"]];function x4({active:e,initial:t}){return s.jsxs("span",{className:"au-avatar","data-active":e,children:[s.jsx(en,{name:"imgFigureStepfun",size:18}),s.jsxs("span",{className:"au-settings-avatar","aria-hidden":"true",children:[s.jsx(en,{name:"imgFigureStepfun1",size:22}),s.jsx(en,{name:"imgFigureStepfun2",size:28})]}),s.jsx("b",{children:t}),!e&&h4.map(([n,r,i,o,l,u,a,c])=>s.jsxs("span",{className:"au-region au-"+n,children:[s.jsxs("span",{className:"au-arc-base",children:[s.jsx(en,{name:r,width:i,height:o}),n==="top"&&s.jsx(en,{name:"imgEllipse12",width:8.11687,height:5.09195})]}),s.jsx("span",{className:"au-arc-highlight",children:s.jsx(en,{name:l,width:u,height:a})}),s.jsxs("span",{className:"au-avatar-tooltip",role:"tooltip",children:[c,s.jsx("span",{className:"au-tooltip-arrow",children:s.jsx(en,{name:"imgVector",width:10,height:5})})]})]},n))]})}function m4({name:e,accountId:t,onAction:n}){const[r,i]=d.useState(!1),[o,l]=d.useState(!1),u=d.useRef(null),a=d.useRef(null),c=d.useId();d.useEffect(()=>{if(!r)return;const x=m=>{u.current.contains(m.target)||i(!1)},w=m=>{m.key==="Escape"&&(i(!1),a.current.focus())};return document.addEventListener("pointerdown",x),document.addEventListener("keydown",w),()=>{document.removeEventListener("pointerdown",x),document.removeEventListener("keydown",w)}},[r]);async function g(){try{await navigator.clipboard.writeText(t),l(!0)}catch{l(!1)}}function h(){l(!1),i(!r)}return s.jsxs("div",{ref:u,className:"au-widget","data-open":r,"data-node-id":"24826:27663",children:[s.jsx("style",{children:p4}),s.jsxs("div",{className:"au-panel",id:c,"aria-hidden":!r,children:[s.jsxs("section",{className:"au-glass au-usage","aria-label":"用量与套餐",children:[s.jsxs("button",{className:"au-action au-usage-action",type:"button",tabIndex:r?0:-1,onClick:()=>n==null?void 0:n("usage"),children:[s.jsx(en,{name:"imgUsageDashboard"}),"用量与套餐",s.jsx("span",{className:"au-action-trailing",children:s.jsx(en,{name:"imgUsageArrow",size:14})})]}),g4.map(([x,w,m,N])=>s.jsxs("div",{className:"au-quota",children:[s.jsxs("div",{className:"au-quota-title",children:[x,s.jsxs("span",{className:"au-muted",children:["· ",w]}),N&&s.jsx("span",{className:"au-priority",children:"优先"}),s.jsxs("span",{className:"au-percent",children:[m,"%"]})]}),s.jsx("div",{className:"au-meter","aria-hidden":"true",children:s.jsx("span",{style:{"--au-fill":m+"%"}})})]},x))]}),s.jsx("section",{className:"au-glass au-actions","aria-label":"账号操作",children:s.jsx("div",{className:"au-action-list",children:M4.map(([x,w,m])=>s.jsxs("button",{type:"button",className:"au-action","data-action":x,tabIndex:r?0:-1,onClick:()=>n==null?void 0:n(x),children:[s.jsx(en,{name:m}),w,x==="account"&&s.jsx("span",{className:"au-action-trailing",children:s.jsx(en,{name:"imgUsageArrow",size:14})}),x==="settings"&&s.jsx("span",{className:"au-action-trailing au-shortcut","aria-hidden":"true",children:"⌘,"})]},x))})})]}),s.jsxs("div",{className:"au-row",children:[s.jsxs("button",{ref:a,className:"au-trigger",type:"button","aria-expanded":r,"aria-controls":c,"aria-label":e+"，账号与用量",onClick:h,children:[s.jsx(x4,{active:r,initial:e.slice(0,1)}),s.jsx("span",{className:"au-name",children:e})]}),s.jsxs("div",{className:"au-id","aria-hidden":!r,children:[s.jsx("span",{children:o?"已复制":"ID: "+t}),s.jsx("button",{className:"au-copy-id",type:"button",onClick:g,tabIndex:r?0:-1,"aria-label":"复制账号 ID "+t,children:s.jsx(en,{name:"imgIconCopy",size:10})})]}),s.jsx("button",{className:"au-update",type:"button","aria-label":"下载更新",onClick:()=>n==null?void 0:n("update"),children:s.jsx(en,{name:"imgIconDownload"})})]})]})}const y4=`import React, { useEffect, useId, useRef, useState } from 'react'
 
 const assets = {
   imgEllipse12: 'data:image/svg+xml;base64,PHN2ZyBwcmVzZXJ2ZUFzcGVjdFJhdGlvPSJub25lIiBvdmVyZmxvdz0idmlzaWJsZSIgc3R5bGU9ImRpc3BsYXk6IGJsb2NrOyIgd2lkdGg9IjguMTE2ODciIGhlaWdodD0iNS4wOTE5NSIgdmlld0JveD0iMCAwIDguMTE2ODcgNS4wOTE5NSIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggaWQ9IkVsbGlwc2UgMTIiIGQ9Ik0wLjc1IDQuMzQxOTVDMi41NjE4NyAyLjUzMDA4IDQuODYwMjQgMS4yODI0NCA3LjM2NjcxIDAuNzUwMTU0IiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2U9IiMxOTFEMjUiIHN0cm9rZS1vcGFjaXR5PSIwLjQ1Ii8+Cjwvc3ZnPgo=',
@@ -358,7 +363,7 @@ const styles = \`
   cursor: pointer;
 }
 .au-widget img { display: block; }
-.au-trigger, .au-update, .au-id { padding: 0; }
+.au-trigger, .au-update, .au-copy-id { padding: 0; }
 .au-widget .au-update { background-color: rgb(124 108 255 / 8%); }
 .au-widget .au-update:hover { background-color: rgb(124 108 255 / 16%); }
 .au-widget .au-action { font-size: 12px; }
@@ -398,7 +403,7 @@ const styles = \`
   line-height: 1.2;
   transition: top 200ms ease-out, font-size 200ms ease-out;
 }
-.au-widget[data-open='true'] .au-name { top: -5px; font-size: 12px; }
+.au-widget[data-open='true'] .au-name { top: -7px; font-size: 12px; }
 .au-widget[data-open='true'] :is(.au-name, .au-id) {
   transition-duration: 150ms;
   transition-timing-function: var(--au-open-curve);
@@ -578,7 +583,6 @@ const styles = \`
 .au-action:hover { background: rgb(25 29 37 / 3%); }
 .au-shortcut { color: rgb(25 29 37 / 45%); }
 .au-action[data-action='logout']:hover { background: rgba(219, 59, 75, 0.05); }
-.au-id { position: absolute; z-index: 2; left: 45px; bottom: 10px; display: flex; align-items: center; gap: 2px; font-size: 10px; line-height: 12px; }
 .au-row { pointer-events: none; }
 .au-trigger, .au-update { pointer-events: auto; }
 .au-widget :is(.au-actions, .au-action-list, .au-name, .au-id, .au-settings-avatar, .au-settings-avatar img + img) {
@@ -588,8 +592,14 @@ const styles = \`
   .au-widget[data-open] *, .au-widget[data-open] .au-panel { transition: none !important; }
 }
 .au-id {
-  bottom: 5px;
+  position: absolute;
+  z-index: 2;
+  top: calc(50% + 12px / 2 * 1.2 - 7px + 2px);
   left: 40px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  line-height: 12px;
   opacity: 0;
   transform: translateY(3px);
   pointer-events: none;
@@ -598,8 +608,8 @@ const styles = \`
 .au-widget[data-open='true'] .au-id {
   opacity: 1;
   transform: translateY(0);
-  pointer-events: auto;
 }
+.au-widget[data-open='true'] .au-copy-id { pointer-events: auto; }
 \`
 
 const quotas = [
@@ -738,10 +748,13 @@ export default function AccountUsage({ name, accountId, onAction }) {
           <Avatar active={open} initial={name.slice(0, 1)} />
           <span className="au-name">{name}</span>
         </button>
-        <button className="au-id" type="button" onClick={copyId} tabIndex={open ? 0 : -1} aria-hidden={!open}
-          aria-label={'复制账号 ID ' + accountId}>
-          <span>{copied ? '已复制' : 'ID: ' + accountId}</span><Icon name="imgIconCopy" size={10} />
-        </button>
+        <div className="au-id" aria-hidden={!open}>
+          <span>{copied ? '已复制' : 'ID: ' + accountId}</span>
+          <button className="au-copy-id" type="button" onClick={copyId} tabIndex={open ? 0 : -1}
+            aria-label={'复制账号 ID ' + accountId}>
+            <Icon name="imgIconCopy" size={10} />
+          </button>
+        </div>
         <button className="au-update" type="button" aria-label="下载更新" onClick={() => onAction?.('update')}>
           <Icon name="imgIconDownload" />
         </button>
