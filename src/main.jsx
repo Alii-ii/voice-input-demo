@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import AccountUsageDemo from './account-usage/AccountUsageDemo.jsx'
 import ChatLab from './chat/ChatLab.jsx'
 import InspectLab from './inspect/InspectLab.jsx'
 import PathsPage from './paths/PathsPage.jsx'
@@ -14,6 +15,7 @@ import './index.css'
  *  - #/chat    → 对话 Minimap 实验台
  *  - #/voice   → 语音输入交互探索
  *  - #/inspect → 移动端点选编辑
+ *  - #/account-usage → 账号与用量
  *  - #/paths/* → 隐藏的点选路径页，页面里不渲染下面这排全局按钮
  *  分享 URL 自带 hash 即可直达对应 demo，无需手动切 tab。
  */
@@ -22,6 +24,7 @@ const ROUTES = [
   { key: 'chat', hash: '#/chat', label: '对话 Minimap 实验台', title: '对话 Minimap 实验台' },
   { key: 'voice', hash: '#/voice', label: '语音输入交互探索', title: '语音输入交互探索' },
   { key: 'inspect', hash: '#/inspect', label: '移动端点选', title: '移动端点选编辑' },
+  { key: 'account-usage', hash: '#/account-usage', label: '账号与用量', title: '账号与用量' },
 ]
 const DEFAULT_KEY = 'chat'
 
@@ -99,6 +102,7 @@ function Root() {
         {tab === 'chat' && <ChatLab />}
         {tab === 'voice' && <App />}
         {tab === 'inspect' && <InspectLab />}
+        {tab === 'account-usage' && <AccountUsageDemo />}
         {tab === 'paths' && <PathsPage />}
       </div>
     </div>
