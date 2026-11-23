@@ -42,6 +42,7 @@ Error generating stack: `+o.message+`
   box-sizing: border-box;
   color: #191d25;
   font-family: 'Alibaba PuHuiTi 2.0', system-ui, sans-serif;
+  font-weight: 300;
   --au-width: 241px;
   --au-actions-height: 138px;
   --au-usage-delay: 0ms;
@@ -340,6 +341,7 @@ const styles = \`
   box-sizing: border-box;
   color: #191d25;
   font-family: 'Alibaba PuHuiTi 2.0', system-ui, sans-serif;
+  font-weight: 300;
   --au-width: 241px;
   --au-actions-height: 138px;
   --au-usage-delay: 0ms;
