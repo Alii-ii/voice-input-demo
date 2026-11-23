@@ -49,7 +49,7 @@ const styles = `
   cursor: pointer;
 }
 .au-widget img { display: block; }
-.au-trigger, .au-update, .au-id { padding: 0; }
+.au-trigger, .au-update, .au-copy-id { padding: 0; }
 .au-widget .au-update { background-color: rgb(124 108 255 / 8%); }
 .au-widget .au-update:hover { background-color: rgb(124 108 255 / 16%); }
 .au-widget .au-action { font-size: 12px; }
@@ -89,7 +89,7 @@ const styles = `
   line-height: 1.2;
   transition: top 200ms ease-out, font-size 200ms ease-out;
 }
-.au-widget[data-open='true'] .au-name { top: -5px; font-size: 12px; }
+.au-widget[data-open='true'] .au-name { top: -7px; font-size: 12px; }
 .au-widget[data-open='true'] :is(.au-name, .au-id) {
   transition-duration: 150ms;
   transition-timing-function: var(--au-open-curve);
@@ -269,7 +269,6 @@ const styles = `
 .au-action:hover { background: rgb(25 29 37 / 3%); }
 .au-shortcut { color: rgb(25 29 37 / 45%); }
 .au-action[data-action='logout']:hover { background: rgba(219, 59, 75, 0.05); }
-.au-id { position: absolute; z-index: 2; left: 45px; bottom: 10px; display: flex; align-items: center; gap: 2px; font-size: 10px; line-height: 12px; }
 .au-row { pointer-events: none; }
 .au-trigger, .au-update { pointer-events: auto; }
 .au-widget :is(.au-actions, .au-action-list, .au-name, .au-id, .au-settings-avatar, .au-settings-avatar img + img) {
@@ -279,8 +278,14 @@ const styles = `
   .au-widget[data-open] *, .au-widget[data-open] .au-panel { transition: none !important; }
 }
 .au-id {
-  bottom: 5px;
+  position: absolute;
+  z-index: 2;
+  top: calc(50% + 12px / 2 * 1.2 - 7px + 2px);
   left: 40px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  line-height: 12px;
   opacity: 0;
   transform: translateY(3px);
   pointer-events: none;
@@ -289,8 +294,8 @@ const styles = `
 .au-widget[data-open='true'] .au-id {
   opacity: 1;
   transform: translateY(0);
-  pointer-events: auto;
 }
+.au-widget[data-open='true'] .au-copy-id { pointer-events: auto; }
 `
 
 const quotas = [
@@ -429,10 +434,13 @@ export default function AccountUsage({ name, accountId, onAction }) {
           <Avatar active={open} initial={name.slice(0, 1)} />
           <span className="au-name">{name}</span>
         </button>
-        <button className="au-id" type="button" onClick={copyId} tabIndex={open ? 0 : -1} aria-hidden={!open}
-          aria-label={'复制账号 ID ' + accountId}>
-          <span>{copied ? '已复制' : 'ID: ' + accountId}</span><Icon name="imgIconCopy" size={10} />
-        </button>
+        <div className="au-id" aria-hidden={!open}>
+          <span>{copied ? '已复制' : 'ID: ' + accountId}</span>
+          <button className="au-copy-id" type="button" onClick={copyId} tabIndex={open ? 0 : -1}
+            aria-label={'复制账号 ID ' + accountId}>
+            <Icon name="imgIconCopy" size={10} />
+          </button>
+        </div>
         <button className="au-update" type="button" aria-label="下载更新" onClick={() => onAction?.('update')}>
           <Icon name="imgIconDownload" />
         </button>
